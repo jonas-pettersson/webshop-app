@@ -346,4 +346,92 @@ def generate_masterlista(
     # Remove duplicates
     df_master = df_master.drop_duplicates()
 
-    df_master.to_excel(output_path)
+    df_master.to_excel(output_path, engine='openpyxl')
+
+
+def generate_lagerrapport(
+    inventory_df: pd.DataFrame,
+    template_dir: Path,
+    output_path: Path
+):
+    """Generate inventory report using template.
+
+    Creates lagerrapport.xlsx with one row per product showing sales performance,
+    calculations, and sales area categorization.
+
+    Follows the template-based pattern:
+    1. Copy template to output
+    2. Load workbook and template sheet
+    3. Create Content sheet from template
+    4. Insert rows and fill data using named ranges
+    5. Remove template sheet and save
+
+    Args:
+        inventory_df: Processed inventory DataFrame with 10 columns:
+            - SKU
+            - Product title
+            - Category (SKUT)
+            - Category
+            - Regular price
+            - Items sold
+            - Stock
+            - Tax class
+            - Total sales
+            - Total tax
+        template_dir: Path to templates directory
+        output_path: Path where lagerrapport.xlsx should be written
+    """
+    # Copy template to output
+    template_path = template_dir / config.TEMPLATE_FILENAME_LAGERRAPPORT
+
+    if output_path.exists():
+        output_path.unlink()
+
+    shutil.copyfile(template_path, output_path)
+
+    # Load workbook
+    workbook = load_workbook(filename=output_path)
+    template_sheet = workbook['template']
+
+    # Get header row position (row 1 in our simplified template)
+    sku_cell = get_first_cell_for_named_range(workbook, template_sheet, 'SKU')
+    header_row = template_sheet[sku_cell].row  # Should be 1
+    template_data_row = header_row + 1  # Row 2 is the template data row
+
+    # Create Content sheet
+    content_sheet = workbook.copy_worksheet(template_sheet)
+    content_sheet.title = 'Content'
+
+    # Delete template data row (row 2)
+    content_sheet.delete_rows(idx=template_data_row, amount=1)
+
+    # Iterate through data and insert rows
+    i = 0
+    for index, row in inventory_df.iterrows():
+        # Insert row with formatting from template_data_row
+        insert_row_and_copy_format(
+            template_sheet,
+            content_sheet,
+            template_data_row,  # Copy formatting from row 2
+            template_data_row + i  # Insert at row 2, 3, 4, ...
+        )
+
+        # Fill data using named ranges
+        range_names = [
+            'SKU', 'ProductTitle', 'CategorySKUT', 'Category',
+            'RegularPrice', 'ItemsSold', 'Stock', 'TaxClass',
+            'TotalSales', 'TotalTax'
+        ]
+
+        for range_name, col_name in zip(range_names, inventory_df.columns):
+            fill_cell_for_attribute(
+                range_name, workbook, template_sheet, content_sheet,
+                i + 1,  # Offset by 1 because header is row 1, data starts row 2
+                row[col_name]
+            )
+
+        i += 1
+
+    # Remove template sheet and save
+    workbook.remove(template_sheet)
+    workbook.save(filename=output_path)

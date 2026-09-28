@@ -142,7 +142,8 @@ def generate_diffs_report(validation_result: ValidationResult, output_path: Path
     # Sheet 1: Orders without time bookings
     validation_result.orders_no_timeslot.to_excel(
         output_path,
-        sheet_name='Beställning utan tidsbokning'
+        sheet_name='Beställning utan tidsbokning',
+        engine='openpyxl'
     )
 
     workbook = load_workbook(filename=output_path)
@@ -151,7 +152,7 @@ def generate_diffs_report(validation_result: ValidationResult, output_path: Path
     workbook.save(filename=output_path)
 
     # Sheet 2: Time bookings without orders
-    with pd.ExcelWriter(output_path, mode='a') as writer:
+    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
         validation_result.timeslots_no_order.to_excel(
             writer,
             sheet_name='Tidsbokning utan beställning'
@@ -163,7 +164,7 @@ def generate_diffs_report(validation_result: ValidationResult, output_path: Path
     workbook.save(filename=output_path)
 
     # Sheet 3: Duplicate time bookings
-    with pd.ExcelWriter(output_path, mode='a') as writer:
+    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
         validation_result.duplicate_bookings.to_excel(
             writer,
             sheet_name='Dubbla tidsbokningar'
@@ -175,7 +176,7 @@ def generate_diffs_report(validation_result: ValidationResult, output_path: Path
     workbook.save(filename=output_path)
 
     # Sheet 4: Missing products
-    with pd.ExcelWriter(output_path, mode='a') as writer:
+    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
         validation_result.missing_products.to_excel(
             writer,
             sheet_name='Saknas i produktlista'
@@ -187,7 +188,7 @@ def generate_diffs_report(validation_result: ValidationResult, output_path: Path
     workbook.save(filename=output_path)
 
     # Sheet 5: Missing packing categories
-    with pd.ExcelWriter(output_path, mode='a') as writer:
+    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
         validation_result.missing_categories.to_excel(
             writer,
             sheet_name='Packningskategori saknas'
@@ -212,3 +213,67 @@ def remove_duplicate_bookings(timeslots_df: pd.DataFrame) -> pd.DataFrame:
         New DataFrame with duplicates removed
     """
     return timeslots_df.drop_duplicates(subset=['Email'], keep='first')
+
+
+def validate_inventory_data(
+    product_export_df: pd.DataFrame,
+    products_report_df: pd.DataFrame,
+    merged_df: pd.DataFrame
+) -> dict:
+    """Validate inventory data for lagerrapport generation.
+
+    Checks for data consistency issues:
+    - SKU mismatches (critical): SKUs in sales report but not in product catalog
+    - Unmapped SKUs (warning): Products with no sales area mapping
+    - Missing prices (warning): Products without price data
+    - Missing stock (info): Products without stock data
+
+    Args:
+        product_export_df: Full product catalog DataFrame
+        products_report_df: Sales report DataFrame
+        merged_df: Merged data with Category (SKUT) column added
+
+    Returns:
+        dict with:
+        - is_valid: bool (False if critical errors found)
+        - warnings: list of warning messages
+        - sku_mismatches: list of SKUs in report but not in export
+        - unmapped_skus: DataFrame of products with Unknown sales area
+        - missing_prices: DataFrame of products with missing prices
+        - missing_stock: DataFrame of products with missing stock
+    """
+    warnings = []
+    is_valid = True
+
+    # Check for SKU mismatches (critical)
+    report_skus = set(products_report_df['SKU'].dropna())
+    export_skus = set(product_export_df['SKU'].dropna())
+    sku_mismatches = list(report_skus - export_skus)
+
+    if sku_mismatches:
+        is_valid = False
+        warnings.append(f"⚠️ {len(sku_mismatches)} SKU(s) not found in product export")
+
+    # Check for unmapped SKUs (warning)
+    unmapped_skus = merged_df[merged_df['Category (SKUT)'] == 'Unknown']
+    if len(unmapped_skus) > 0:
+        warnings.append(f"⚠️ {len(unmapped_skus)} product(s) have unknown sales area")
+
+    # Check for missing prices (warning)
+    missing_prices = merged_df[merged_df['Regular price'].isna()]
+    if len(missing_prices) > 0:
+        warnings.append(f"⚠️ {len(missing_prices)} product(s) have missing price data")
+
+    # Check for missing stock (info)
+    missing_stock = merged_df[merged_df['Stock'].isna()]
+    if len(missing_stock) > 0:
+        warnings.append(f"ℹ️ {len(missing_stock)} product(s) have missing stock data")
+
+    return {
+        'is_valid': is_valid,
+        'warnings': warnings,
+        'sku_mismatches': sku_mismatches,
+        'unmapped_skus': unmapped_skus,
+        'missing_prices': missing_prices,
+        'missing_stock': missing_stock
+    }

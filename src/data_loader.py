@@ -182,3 +182,55 @@ def load_schedule(market_type: str, template_dir: Path) -> pd.DataFrame:
     ]
 
     return df
+
+
+def load_product_export(file_obj: BinaryIO) -> pd.DataFrame:
+    """Load full product catalog from wc-product-export.csv for inventory report.
+
+    Args:
+        file_obj: File object containing CSV data
+
+    Returns:
+        DataFrame with columns: SKU, Name, Regular price, Stock, Tax status, Tax class
+    """
+    df = pd.read_csv(
+        file_obj,
+        usecols=['SKU', 'Name', 'Regular price', 'Stock', 'Tax status', 'Tax class']
+    )
+    df['SKU'] = df['SKU'].str.strip()
+    # Convert numeric columns
+    df['Regular price'] = pd.to_numeric(df['Regular price'], errors='coerce')
+    return df
+
+
+def load_products_report_export(file_obj: BinaryIO) -> pd.DataFrame:
+    """Load product sales report from wc-products-report-export.csv for inventory report.
+
+    Args:
+        file_obj: File object containing CSV data
+
+    Returns:
+        DataFrame with columns: Product title, SKU, Items sold, N. Revenue, Category, Stock
+    """
+    df = pd.read_csv(
+        file_obj,
+        usecols=['Product title', 'SKU', 'Items sold', 'N. Revenue', 'Category', 'Stock']
+    )
+    df['SKU'] = df['SKU'].str.strip()
+    # Convert numeric columns
+    df['Items sold'] = pd.to_numeric(df['Items sold'], errors='coerce')
+    return df
+
+
+def load_sku_mapping(template_dir: Path) -> pd.DataFrame:
+    """Load SKU prefix to sales area mapping from template file.
+
+    Args:
+        template_dir: Path to templates directory
+
+    Returns:
+        DataFrame with columns: SKU_Prefix, Sales_Area
+    """
+    template_path = template_dir / config.TEMPLATE_FILENAME_SKU_MAPPING
+    df = pd.read_excel(str(template_path), sheet_name='Mapping')
+    return df

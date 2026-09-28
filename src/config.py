@@ -30,6 +30,22 @@ OUTPUT_FILENAME_MASTERLISTA = 'masterlista.xlsx'
 OUTPUT_FILENAME_DIFFS = 'diffs.xlsx'
 OUTPUT_FILENAME_ALLDATA = 'allData.xlsx'
 OUTPUT_FILENAME_TIMESLOTS_OUTPUT = 'tidsbokning.xlsx'
+OUTPUT_FILENAME_LAGERRAPPORT = 'lagerrapport.xlsx'
+
+# Tax rates (Austrian VAT)
+TAX_RATES = {
+    'reduzierter-preis': 0.10,  # Reduced rate 10%
+    'zero-rate': 0.00,          # Zero rate 0%
+    'parent': 0.20,             # Standard rate 20%
+    None: 0.20,                 # Default to standard
+    'nan': 0.20                 # Handle pandas NaN
+}
+
+# Lagerrapport file names
+INPUT_FILENAME_PRODUCT_EXPORT = 'wc-product-export.csv'
+INPUT_FILENAME_PRODUCTS_REPORT_EXPORT = 'wc-products-report-export.csv'
+TEMPLATE_FILENAME_SKU_MAPPING = 'sku_sales_area_mapping.xlsx'
+TEMPLATE_FILENAME_LAGERRAPPORT = 'lagerrapport_template.xlsx'
 
 # Template file names
 TEMPLATE_FILENAME_HAMTLISTA = 'hämtlista_template.xlsx'
