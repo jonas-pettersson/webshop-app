@@ -185,20 +185,22 @@ See `DEPLOYMENT.md` for detailed instructions.
 
 ## Testing
 
-### With Historical Data
+### Manual Testing
 
-Test files are in `../WebShopReport/input/`:
-- `2024_11_20/` - julmarknad data
-- `2025_03_25/` - pask data
-
-Upload through web interface and compare generated reports to notebook outputs.
+Test the application by uploading real WordPress/WooCommerce exports through the web interface:
+1. Select market type (julmarknad/julmaten/pask)
+2. Upload the three required CSV/Excel files
+3. Run validation and review any errors
+4. Generate and download reports
 
 ### Validation
 
-The app behavior should match the original Jupyter notebook exactly. Use historical data to verify:
+During development, the app was validated against the original Jupyter notebook using historical production data (November 2024 Christmas market, March 2025 Easter market) to ensure identical behavior:
 - Same validation errors detected
 - Same reports generated
 - Same Excel formatting
+
+The app is now production-ready and standalone.
 
 ## Maintenance
 
@@ -228,13 +230,14 @@ The app behavior should match the original Jupyter notebook exactly. Use histori
 
 This application was extracted from the Jupyter notebook in September 2026:
 
-- Original: `../WebShopReport/Report.ipynb` (1,670 lines, single file)
+- Original: Jupyter notebook at `C:\Users\atw10wp4\JupyterLab\Kyrkan\WebShopReport\Report.ipynb` (1,670 lines, single file)
 - Extracted to: 6 modules (~1,540 lines) + Streamlit UI (520 lines)
 - Behavior: Identical to notebook
 - Maintenance: Easier (modular, version controlled)
 - Deployment: Web-accessible (vs. local Jupyter)
+- Moved to: `C:\dev\webshop-app` in October 2026 (standalone project)
 
-The notebook remains as a reference and backup system.
+The notebook remains in the Kyrkan folder as a reference and backup system.
 
 ## Dependencies
 

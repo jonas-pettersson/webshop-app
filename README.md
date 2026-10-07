@@ -83,16 +83,14 @@ Visit the deployed application: [svenska-kyrkan-webshop-reports.streamlit.app](h
 
 ## Testing
 
-Test with historical data from the notebook project:
+Test the application using real WordPress/WooCommerce exports:
 
-```bash
-# Files are in:
-../WebShopReport/input/2024_11_20/
-```
+1. Select your market type
+2. Upload the three required files through the web interface
+3. Run validation and review any issues
+4. Generate and download reports
 
-Upload `orders.xlsx`, `wc-product-export.csv`, and `tidsbokning.csv` through the web interface.
-
-Compare generated reports to notebook outputs for validation.
+The application was validated during development against historical production data to ensure identical behavior to the original Jupyter notebook implementation.
 
 ## Use Cases
 
@@ -107,7 +105,7 @@ The template system makes it adaptable to different organizational needs.
 
 ## Project Background
 
-This application was extracted from a Jupyter notebook (1,670 lines) into a modular, web-accessible system. The original notebook remains available for reference in the parent repository.
+This application was extracted from a Jupyter notebook (1,670 lines) into a modular, web-accessible system in September 2026. The original notebook remains available for reference at `C:\Users\atw10wp4\JupyterLab\Kyrkan\WebShopReport`.
 
 **Benefits of web version:**
 - ✅ No local installation required

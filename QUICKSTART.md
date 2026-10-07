@@ -52,21 +52,17 @@ Click "Generate All Reports" to create:
 ### Step 5: Download
 Download individual reports or all reports as a ZIP file.
 
-## Testing with Historical Data
+## Testing with Real Data
 
-Use the test data from the notebook project:
+Test the application using exports from your WordPress/WooCommerce site:
 
-```bash
-# Files are in:
-../WebShopReport/input/2024_11_20/
-```
+1. Export products from WordPress Products → Export → `wc-product-export.csv`
+2. Export orders from WooCommerce → Export Order → `orders.xlsx`
+3. Export time slots from WP Time Slots Booking Form → Export to CSV → `tidsbokning.csv`
 
-Upload these files:
-- `orders.xlsx`
-- `wc-product-export.csv`
-- `tidsbokning.csv`
+Upload these files through the web interface and generate reports.
 
-Compare the generated reports to the notebook's output to verify correctness.
+The application was validated during development using historical production data to ensure correctness.
 
 ## Troubleshooting
 
@@ -79,5 +75,5 @@ Make sure you're running from the webshop-app directory
 ### Password not working
 Check `.streamlit/secrets.toml` exists and has the correct password
 
-### Reports don't match notebook output
-This is expected initially. Run side-by-side comparison using historical data.
+### Validation errors appearing
+Review the validation report to check for data issues (missing products, duplicate bookings, etc.)
