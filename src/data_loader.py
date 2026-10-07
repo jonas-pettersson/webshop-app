@@ -198,7 +198,8 @@ def load_product_export(file_obj: BinaryIO) -> pd.DataFrame:
         usecols=['SKU', 'Name', 'Regular price', 'Stock', 'Tax status', 'Tax class']
     )
     df['SKU'] = df['SKU'].str.strip()
-    # Convert numeric columns
+    # Convert numeric columns - handle both English (dot) and German (comma) decimal notation
+    df['Regular price'] = df['Regular price'].astype(str).str.replace(',', '.', regex=False)
     df['Regular price'] = pd.to_numeric(df['Regular price'], errors='coerce')
     return df
 
@@ -217,7 +218,8 @@ def load_products_report_export(file_obj: BinaryIO) -> pd.DataFrame:
         usecols=['Product title', 'SKU', 'Items sold', 'N. Revenue', 'Category', 'Stock']
     )
     df['SKU'] = df['SKU'].str.strip()
-    # Convert numeric columns
+    # Convert numeric columns - handle both English (dot) and German (comma) decimal notation
+    df['Items sold'] = df['Items sold'].astype(str).str.replace(',', '.', regex=False)
     df['Items sold'] = pd.to_numeric(df['Items sold'], errors='coerce')
     return df
 
