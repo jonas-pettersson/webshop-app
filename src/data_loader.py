@@ -89,14 +89,22 @@ def load_timeslots(file_obj: BinaryIO, market_type: str) -> pd.DataFrame:
     df = pd.read_csv(
         file_obj,
         index_col=False,
-        parse_dates=['Time', 'app_date_1', 'Select Date and Time'],
-        dayfirst=False,
         usecols=[
             'Time', 'Email',
             'app_date_1', 'app_slot_1', 'Select Date and Time',
             'Name', 'Telefon'
         ],
         encoding='latin_1'
+    )
+
+    # Parse dates explicitly to avoid format inference warnings
+    df['Time'] = pd.to_datetime(df['Time'], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+    df['app_date_1'] = pd.to_datetime(df['app_date_1'], format='%Y-%m-%d', errors='coerce')
+    # Select Date and Time has a complex format with extra data, parse the first two parts
+    df['Select Date and Time'] = pd.to_datetime(
+        df['Select Date and Time'].str.split(' ').str[:2].str.join(' '),
+        format='%Y-%m-%d %H:%M',
+        errors='coerce'
     )
 
     df.columns = [
@@ -106,8 +114,9 @@ def load_timeslots(file_obj: BinaryIO, market_type: str) -> pd.DataFrame:
     ]
 
     # Convert pick-up time from string to real time format
-    df['PickUpTime'] = df['PickUpTime'].transform(
-        lambda t: datetime.strptime(t, '%H:%M').time()
+    # Handle empty strings and NaN values
+    df['PickUpTime'] = df['PickUpTime'].apply(
+        lambda t: datetime.strptime(t, '%H:%M').time() if pd.notna(t) and t.strip() != '' else pd.NaT
     )
 
     # Convert emails to lowercase for matching

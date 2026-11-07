@@ -176,7 +176,7 @@ def main():
         if all_files_uploaded:
             st.header("3️⃣ Validation & Processing")
 
-            if st.button("▶️ Run Validation", type="primary", use_container_width=True):
+            if st.button("▶️ Run Validation", type="primary", width='stretch'):
                 with st.spinner("Loading data..."):
                     try:
                         # Load uploaded files
@@ -235,7 +235,7 @@ def main():
                 st.subheader("Validation Results")
 
                 # Create columns for each validation type
-                col1, col2, col3, col4, col5 = st.columns(5)
+                col1, col2, col3, col4, col5, col6 = st.columns(6)
 
                 with col1:
                     if summary['orders_no_timeslot'] > 0:
@@ -248,20 +248,26 @@ def main():
                         st.metric("Timeslots w/o Order", summary['timeslots_no_order'], delta=None, delta_color="off")
                     else:
                         st.metric("Timeslots w/o Order", "✓", delta=None)
-    
+
                 with col3:
+                    if summary['incomplete_timeslots'] > 0:
+                        st.metric("Incomplete Timeslots", summary['incomplete_timeslots'], delta=None, delta_color="off")
+                    else:
+                        st.metric("Incomplete Timeslots", "✓", delta=None)
+
+                with col4:
                     if summary['duplicate_bookings'] > 0:
                         st.metric("Duplicate Bookings", summary['duplicate_bookings'], delta=None, delta_color="off")
                     else:
                         st.metric("Duplicate Bookings", "✓", delta=None)
-    
-                with col4:
+
+                with col5:
                     if summary['missing_products'] > 0:
                         st.metric("Missing Products", summary['missing_products'], delta=None, delta_color="off")
                     else:
                         st.metric("Missing Products", "✓", delta=None)
-    
-                with col5:
+
+                with col6:
                     if summary['missing_categories'] > 0:
                         st.metric("Missing Categories", summary['missing_categories'], delta=None, delta_color="off")
                     else:
@@ -270,23 +276,35 @@ def main():
                 # Show details in expanders
                 if summary['orders_no_timeslot'] > 0:
                     with st.expander(f"⚠️ View {summary['orders_no_timeslot']} Orders Without Timeslot"):
-                        st.dataframe(validation_result.orders_no_timeslot, use_container_width=True)
-    
+                        st.dataframe(validation_result.orders_no_timeslot, width='stretch')
+
                 if summary['timeslots_no_order'] > 0:
                     with st.expander(f"⚠️ View {summary['timeslots_no_order']} Timeslots Without Order"):
-                        st.dataframe(validation_result.timeslots_no_order, use_container_width=True)
+                        st.dataframe(validation_result.timeslots_no_order, width='stretch')
+
+                if summary['incomplete_timeslots'] > 0:
+                    with st.expander(f"⚠️ View {summary['incomplete_timeslots']} Incomplete Timeslots (Missing Data)"):
+                        missing_email_count = validation_result.incomplete_timeslots['Email'].isna().sum()
+                        missing_time_count = validation_result.incomplete_timeslots['PickUpTime'].isna().sum()
+                        warnings = []
+                        if missing_email_count > 0:
+                            warnings.append(f"{missing_email_count} with missing email")
+                        if missing_time_count > 0:
+                            warnings.append(f"{missing_time_count} with missing pickup time")
+                        st.info(f"ℹ️ Data quality issues: {', '.join(warnings)}")
+                        st.dataframe(validation_result.incomplete_timeslots, width='stretch')
     
                 if summary['duplicate_bookings'] > 0:
                     with st.expander(f"⚠️ View {summary['duplicate_bookings']} Duplicate Bookings"):
-                        st.dataframe(validation_result.duplicate_bookings, use_container_width=True)
+                        st.dataframe(validation_result.duplicate_bookings, width='stretch')
     
                 if summary['missing_products'] > 0:
                     with st.expander(f"⚠️ View {summary['missing_products']} Missing Products"):
-                        st.dataframe(validation_result.missing_products, use_container_width=True)
+                        st.dataframe(validation_result.missing_products, width='stretch')
     
                 if summary['missing_categories'] > 0:
                     with st.expander(f"⚠️ View {summary['missing_categories']} Missing Categories"):
-                        st.dataframe(validation_result.missing_categories, use_container_width=True)
+                        st.dataframe(validation_result.missing_categories, width='stretch')
     
                 # Download diffs report
                 st.download_button(
@@ -304,7 +322,7 @@ def main():
                 if validation_result.has_errors():
                     st.warning("⚠️ Validation issues detected. Review them before proceeding, or continue anyway.")
     
-                if st.button("🚀 Generate All Reports", type="primary", use_container_width=True):
+                if st.button("🚀 Generate All Reports", type="primary", width='stretch'):
                     progress_bar = st.progress(0)
                     status_text = st.empty()
     
@@ -488,7 +506,7 @@ def main():
         if inventory_files_uploaded:
             st.header("2️⃣ Validation & Processing")
 
-            if st.button("▶️ Load and Validate Data", type="primary", use_container_width=True, key='validate_inventory'):
+            if st.button("▶️ Load and Validate Data", type="primary", width='stretch', key='validate_inventory'):
                 with st.spinner("Loading inventory data..."):
                     try:
                         # Load uploaded files
@@ -562,7 +580,7 @@ def main():
                 # Step 3: Generate Report
                 st.header("3️⃣ Generate Report")
 
-                if st.button("▶️ Generate Lagerrapport", type="primary", use_container_width=True, key='generate_inventory'):
+                if st.button("▶️ Generate Lagerrapport", type="primary", width='stretch', key='generate_inventory'):
                     with st.spinner("Generating lagerrapport..."):
                         try:
                             # Create outputs directory
@@ -597,7 +615,7 @@ def main():
                             file_name='lagerrapport.xlsx',
                             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                             type="primary",
-                            use_container_width=True
+                            width='stretch'
                         )
 
         else:

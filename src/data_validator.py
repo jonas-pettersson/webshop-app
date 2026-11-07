@@ -20,6 +20,7 @@ class ValidationResult:
     def __init__(self):
         self.orders_no_timeslot = pd.DataFrame()
         self.timeslots_no_order = pd.DataFrame()
+        self.incomplete_timeslots = pd.DataFrame()
         self.duplicate_bookings = pd.DataFrame()
         self.missing_products = pd.DataFrame()
         self.missing_categories = pd.DataFrame()
@@ -29,6 +30,7 @@ class ValidationResult:
         return (
             len(self.orders_no_timeslot) > 0 or
             len(self.timeslots_no_order) > 0 or
+            len(self.incomplete_timeslots) > 0 or
             len(self.duplicate_bookings) > 0 or
             len(self.missing_products) > 0 or
             len(self.missing_categories) > 0
@@ -39,6 +41,7 @@ class ValidationResult:
         return {
             'orders_no_timeslot': len(self.orders_no_timeslot),
             'timeslots_no_order': len(self.timeslots_no_order),
+            'incomplete_timeslots': len(self.incomplete_timeslots),
             'duplicate_bookings': len(self.duplicate_bookings),
             'missing_products': len(self.missing_products),
             'missing_categories': len(self.missing_categories)
@@ -56,6 +59,7 @@ def validate_data(
     Checks for:
     - Orders without time bookings
     - Time bookings without orders
+    - Incomplete time bookings (missing email or pickup time)
     - Duplicate time bookings (multiple per email)
     - Products in orders but not in product catalog
     - Packing categories in orders but not defined
@@ -71,9 +75,9 @@ def validate_data(
     """
     result = ValidationResult()
 
-    # 1. Orders without time bookings
-    order_emails = orders_df['Email'].unique()
-    timeslot_emails = timeslots_df['Email'].unique()
+    # 1. Orders without time bookings (only valid orders with emails)
+    order_emails = orders_df['Email'].dropna().unique()
+    timeslot_emails = timeslots_df['Email'].dropna().unique()
     diff_emails = np.setdiff1d(order_emails, timeslot_emails)
 
     result.orders_no_timeslot = orders_df[
@@ -83,7 +87,7 @@ def validate_data(
         'OrderTotalAmount', 'OrderDate', 'CustomerNote', 'PhoneOrder'
     ]]
 
-    # 2. Time bookings without orders
+    # 2. Time bookings without orders (only valid timeslots with emails)
     diff_emails = np.setdiff1d(timeslot_emails, order_emails)
     result.timeslots_no_order = timeslots_df[
         timeslots_df['Email'].isin(diff_emails)
@@ -91,8 +95,15 @@ def validate_data(
         'Email', 'PickUpDate', 'PickUpTime', 'FullNameTimeslot', 'Telephone'
     ]]
 
-    # 3. Duplicate time bookings
-    email_counts = timeslots_df['Email'].value_counts()
+    # 2b. Incomplete timeslots (missing email or pickup time) - data quality issue
+    result.incomplete_timeslots = timeslots_df[
+        timeslots_df['Email'].isna() | timeslots_df['PickUpTime'].isna()
+    ][[
+        'Email', 'PickUpDate', 'PickUpTime', 'FullNameTimeslot', 'Telephone'
+    ]]
+
+    # 3. Duplicate time bookings (excluding NaN emails)
+    email_counts = timeslots_df['Email'].dropna().value_counts()
     duplicate_emails = email_counts.index[email_counts.gt(1)]
     result.duplicate_bookings = timeslots_df[
         timeslots_df['Email'].isin(duplicate_emails)
@@ -101,8 +112,8 @@ def validate_data(
     ]]
 
     # 4. Products in orders but missing from product catalog
-    order_skus = orders_df['ArticleNumber'].unique()
-    product_skus = products_df['ArticleNumber'].unique()
+    order_skus = orders_df['ArticleNumber'].dropna().unique()
+    product_skus = products_df['ArticleNumber'].dropna().unique()
     sku_diff = np.setdiff1d(order_skus, product_skus)
 
     result.missing_products = orders_df[
@@ -112,8 +123,8 @@ def validate_data(
     ).sort_values(by='ArticleNumber')
 
     # 5. Packing categories in orders but not defined
-    order_categories = orders_df['PackingCategoryKey'].unique()
-    packing_categories = packing_df['PackingCategoryKey'].unique()
+    order_categories = orders_df['PackingCategoryKey'].dropna().unique()
+    packing_categories = packing_df['PackingCategoryKey'].dropna().unique()
     category_diff = np.setdiff1d(order_categories, packing_categories)
 
     result.missing_categories = orders_df[
@@ -129,7 +140,7 @@ def validate_data(
 def generate_diffs_report(validation_result: ValidationResult, output_path: Path):
     """Generate Excel validation report with multiple sheets.
 
-    Creates diffs.xlsx with 5 sheets showing validation issues.
+    Creates diffs.xlsx with 6 sheets showing validation issues.
 
     Args:
         validation_result: ValidationResult object from validate_data()
@@ -163,7 +174,19 @@ def generate_diffs_report(validation_result: ValidationResult, output_path: Path
     align_cell_width_for(sheet)
     workbook.save(filename=output_path)
 
-    # Sheet 3: Duplicate time bookings
+    # Sheet 3: Incomplete timeslots (missing data)
+    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
+        validation_result.incomplete_timeslots.to_excel(
+            writer,
+            sheet_name='Ofullständiga tidsbokningar'
+        )
+
+    workbook = load_workbook(filename=output_path)
+    sheet = workbook['Ofullständiga tidsbokningar']
+    align_cell_width_for(sheet)
+    workbook.save(filename=output_path)
+
+    # Sheet 4: Duplicate time bookings
     with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
         validation_result.duplicate_bookings.to_excel(
             writer,
@@ -175,7 +198,7 @@ def generate_diffs_report(validation_result: ValidationResult, output_path: Path
     align_cell_width_for(sheet)
     workbook.save(filename=output_path)
 
-    # Sheet 4: Missing products
+    # Sheet 5: Missing products
     with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
         validation_result.missing_products.to_excel(
             writer,
@@ -187,7 +210,7 @@ def generate_diffs_report(validation_result: ValidationResult, output_path: Path
     align_cell_width_for(sheet)
     workbook.save(filename=output_path)
 
-    # Sheet 5: Missing packing categories
+    # Sheet 6: Missing packing categories
     with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
         validation_result.missing_categories.to_excel(
             writer,
