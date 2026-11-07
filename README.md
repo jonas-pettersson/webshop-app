@@ -105,7 +105,7 @@ The template system makes it adaptable to different organizational needs.
 
 ## Project Background
 
-This application was extracted from a Jupyter notebook (1,670 lines) into a modular, web-accessible system in September 2026. The original notebook remains available for reference at `C:\Users\atw10wp4\JupyterLab\Kyrkan\WebShopReport`.
+This application was extracted from a Jupyter notebook (1,670 lines) into a modular, web-accessible system in September 2026.
 
 **Benefits of web version:**
 - ✅ No local installation required

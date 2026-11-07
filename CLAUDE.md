@@ -228,16 +228,15 @@ The app is now production-ready and standalone.
 
 ## Migration from Notebook
 
-This application was extracted from the Jupyter notebook in September 2026:
+This application was extracted from a Jupyter notebook in September 2026:
 
-- Original: Jupyter notebook at `C:\Users\atw10wp4\JupyterLab\Kyrkan\WebShopReport\Report.ipynb` (1,670 lines, single file)
+- Original: Jupyter notebook (1,670 lines, single file)
 - Extracted to: 6 modules (~1,540 lines) + Streamlit UI (520 lines)
 - Behavior: Identical to notebook
 - Maintenance: Easier (modular, version controlled)
 - Deployment: Web-accessible (vs. local Jupyter)
-- Moved to: `C:\dev\webshop-app` in October 2026 (standalone project)
 
-The notebook remains in the Kyrkan folder as a reference and backup system.
+The original notebook is maintained separately as a reference and backup system.
 
 ## Dependencies
 
@@ -259,4 +258,4 @@ Potential improvements (not yet implemented):
 
 ## Contact
 
-For issues or questions about this application, refer to the GitHub repository or the original notebook documentation in `../WebShopReport/CLAUDE.md`.
+For issues or questions about this application, refer to the GitHub repository.
