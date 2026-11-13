@@ -8,9 +8,10 @@ This script replaces:
 - Preserves data structure and relationships
 """
 
-import pandas as pd
 import random
 from pathlib import Path
+
+import pandas as pd
 
 # Fake names (Swedish/Austrian style)
 FIRST_NAMES = [
@@ -80,7 +81,9 @@ def obfuscate_timeslots(input_path, output_path, email_mapping, name_mapping, ph
     df = pd.read_csv(input_path, encoding='latin_1')
 
     # Apply email mapping (use existing mapping to preserve relationships)
-    df['Email'] = df['Email'].map(lambda x: email_mapping.get(x, generate_fake_email(random.randint(1000, 9999))))
+    df['Email'] = df['Email'].map(
+        lambda x: email_mapping.get(x, generate_fake_email(random.randint(1000, 9999)))
+    )
 
     # Apply name mapping or generate new names
     df['Name'] = df['Name'].map(lambda x: name_mapping.get(x, generate_fake_name()))
@@ -114,14 +117,14 @@ def main():
     print("\n" + "=" * 60)
     print("Obfuscation complete!")
     print("=" * 60)
-    print(f"\nNext steps:")
-    print(f"1. Review obfuscated files:")
+    print("\nNext steps:")
+    print("1. Review obfuscated files:")
     print(f"   - {orders_output}")
     print(f"   - {timeslots_output}")
-    print(f"2. If satisfied, replace original files:")
+    print("2. If satisfied, replace original files:")
     print(f"   mv {orders_output} {orders_input}")
     print(f"   mv {timeslots_output} {timeslots_input}")
-    print(f"3. Remove from git history and re-commit")
+    print("3. Remove from git history and re-commit")
 
 if __name__ == '__main__':
     main()

@@ -2,8 +2,8 @@
 
 from datetime import date, time
 
-import pytest
 import pandas as pd
+import pytest
 
 from src.data_processor import merge_all_data
 from src.data_validator import (
@@ -11,11 +11,11 @@ from src.data_validator import (
     REASON_NO_CATEGORY,
     REASON_NO_PRODUCT,
     REASON_NO_TIMESLOT,
-    validate_data,
-    remove_duplicate_bookings,
-    validate_inventory_data,
     InventoryValidationResult,
     ValidationResult,
+    remove_duplicate_bookings,
+    validate_data,
+    validate_inventory_data,
 )
 
 CHECK_NAMES = [attr for attr, _ in CHECKS]

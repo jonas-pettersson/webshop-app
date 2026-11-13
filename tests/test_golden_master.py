@@ -11,9 +11,9 @@ from datetime import datetime
 
 import pytest
 
-from src import config, report_generator
-from src.markets import PASK
+from src import report_generator
 from src.data_validator import generate_diffs_report, validate_data
+from src.markets import PASK
 
 from .golden_master import diff_snapshots, load_golden, save_golden, snapshot_workbook
 

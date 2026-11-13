@@ -8,15 +8,13 @@ affected row is listed in diffs.xlsx so nothing disappears silently.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 
 from .data_processor import prepare_merge_inputs
-from .lagerrapport_processor import UNKNOWN_SALES_AREA
 from .excel_utils import dataframe_to_xlsx_bytes
-
+from .lagerrapport_processor import UNKNOWN_SALES_AREA
 
 TIMESLOT_COLUMNS = ['Email', 'PickUpDate', 'PickUpTime', 'FullNameTimeslot', 'Telephone']
 
@@ -52,7 +50,7 @@ class ValidationResult:
         """Check if any validation issues were found."""
         return any(count > 0 for count in self.get_summary().values())
 
-    def get_summary(self) -> Dict[str, int]:
+    def get_summary(self) -> dict[str, int]:
         """Get count of each validation issue type."""
         return {attr: len(getattr(self, attr)) for attr, _ in CHECKS}
 
@@ -178,11 +176,11 @@ def find_bookings_outside_schedule(
     schedule_df: pd.DataFrame
 ) -> pd.DataFrame:
     """Bookings (with date and time) whose slot is not in the schedule."""
-    scheduled = set(zip(schedule_df['Date'], schedule_df['Tid']))
+    scheduled = set(zip(schedule_df['Date'], schedule_df['Tid'], strict=True))
     booked = timeslots_df.dropna(subset=['PickUpDate', 'PickUpTime'])
     outside = [
         (date.date(), time) not in scheduled
-        for date, time in zip(booked['PickUpDate'], booked['PickUpTime'])
+        for date, time in zip(booked['PickUpDate'], booked['PickUpTime'], strict=True)
     ]
     return booked[outside]
 
@@ -277,7 +275,7 @@ class InventoryValidationResult:
     missing_stock: pd.DataFrame
 
     @property
-    def warnings(self) -> List[str]:
+    def warnings(self) -> list[str]:
         """One summary message per check that found something."""
         messages = [
             (len(self.sku_mismatches), "⚠️ {} SKU(s) not found in product export"),

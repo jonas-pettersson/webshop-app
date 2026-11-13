@@ -259,17 +259,19 @@ see `tests/test_edge_cases.py`.)
 
 ```bash
 pip install -r requirements-dev.txt
+ruff check .   # lint (config: ruff.toml)
 pytest
 ```
 
-Runs in CI on every push (`.github/workflows/tests.yml`). Test data in
+Both run in CI on every push (`.github/workflows/tests.yml`). Test data in
 `tests/fixtures/pask/` is obfuscated (`scripts/obfuscate_test_data.py`).
 
 - `test_golden_master.py` pins every report's cell content. After an intended output
   change: `UPDATE_GOLDEN=1 pytest tests/test_golden_master.py`, then review
   `git diff tests/golden/`.
 - `test_edge_cases.py` - missing dates/times, off-schedule bookings, formula injection
-- `test_app_smoke.py` - Streamlit `AppTest`: login and the full upload → validate → generate flow
+- `test_loader_robustness.py` - reordered/missing columns, encodings, odd values in exports
+- `test_app_smoke.py` - Streamlit `AppTest`: login, both tabs end to end, wrong-file errors
 
 See `tests/README.md`.
 

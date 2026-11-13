@@ -1,19 +1,11 @@
 """Tests for data processing (merging) for order reports."""
 
-import pytest
 import pandas as pd
 
-from src.data_loader import (
-    load_products,
-    load_orders,
-    load_timeslots,
-    load_packing_categories,
-    load_schedule
-)
+from src.data_loader import load_orders, load_packing_categories, load_products, load_timeslots
 from src.data_processor import merge_all_data, sort_for_reports
-from src import config
-from src.markets import PASK
 from src.data_validator import validate_data
+from src.markets import PASK
 
 
 class TestProcessData:
@@ -121,7 +113,8 @@ class TestProcessData:
                         if pd.notna(curr['PickUpTime']) and pd.notna(next_row['PickUpTime']):
                             if curr['PickUpTime'] == next_row['PickUpTime']:
                                 # Same time - check packing category
-                                if pd.notna(curr['PackingCategoryIndex']) and pd.notna(next_row['PackingCategoryIndex']):
+                                both = [curr['PackingCategoryIndex'], next_row['PackingCategoryIndex']]
+                                if all(pd.notna(v) for v in both):
                                     assert curr['PackingCategoryIndex'] <= next_row['PackingCategoryIndex']
 
     def test_orders_without_timeslot_are_excluded_but_reported(self, pask_data):
@@ -139,7 +132,9 @@ class TestProcessData:
         reported = set(result.orders_no_timeslot['OrderNumber'])
 
         assert dropped, "fixture is expected to contain orders without timeslot"
-        assert dropped == reported,             "every order dropped by the merge must be reported by validation"
+        assert dropped == reported, (
+            "every order dropped by the merge must be reported by validation"
+        )
 
         # Orders that survive keep all their order lines
         kept = pask_data.orders[pask_data.orders['OrderNumber'].isin(merged_orders)]

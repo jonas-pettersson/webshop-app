@@ -1,20 +1,16 @@
 """Tests for data loading functions."""
 
-import pytest
 import pandas as pd
-from pathlib import Path
 
 from src.data_loader import (
-    load_products,
     load_orders,
-    load_timeslots,
     load_packing_categories,
-    load_schedule,
     load_product_export,
+    load_products,
     load_products_report_export,
-    load_sku_mapping
+    load_schedule,
+    load_timeslots,
 )
-from src import config
 
 
 class TestLoadProducts:

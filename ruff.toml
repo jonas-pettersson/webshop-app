@@ -1,0 +1,7 @@
+# Linting (run: ruff check .). Formatting is not enforced.
+line-length = 110
+target-version = "py310"
+
+[lint]
+# pycodestyle, pyflakes, warnings, import order, bugbear, pyupgrade
+select = ["E", "F", "W", "I", "B", "UP"]

@@ -247,7 +247,7 @@ def load_schedule(template_path: Path) -> pd.DataFrame:
     # Create additional date and datetime columns
     df['Date'] = df['Dag'].transform(lambda x: x.date())
     df['DateTime'] = [
-        datetime.combine(d, t) for d, t in zip(df['Dag'], df['Tid'])
+        datetime.combine(d, t) for d, t in zip(df['Dag'], df['Tid'], strict=True)
     ]
 
     return df

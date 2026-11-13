@@ -6,9 +6,9 @@ concurrent users of the web app never share or see each other's files.
 
 import io
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional
 
 import pandas as pd
 
@@ -25,11 +25,11 @@ from .data_loader import (
 )
 from .data_processor import merge_all_data, sort_for_reports
 from .data_validator import (
+    InventoryValidationResult,
     ValidationResult,
     generate_diffs_report,
     remove_duplicate_bookings,
     validate_data,
-    InventoryValidationResult,
     validate_inventory_data,
 )
 from .excel_utils import dataframe_to_xlsx_bytes
@@ -43,7 +43,7 @@ from .report_generator import (
     generate_semlelista,
 )
 
-Reports = Dict[str, bytes]
+Reports = dict[str, bytes]
 ProgressCallback = Callable[[int, str], None]
 
 
@@ -81,7 +81,7 @@ def build_diffs_report(result: ValidationResult) -> Reports:
 
 
 def build_order_reports(inputs: OrderInputs, template_dir: Path,
-                        progress: Optional[ProgressCallback] = None) -> Reports:
+                        progress: ProgressCallback | None = None) -> Reports:
     """Merge the data and generate all order reports.
 
     Args:

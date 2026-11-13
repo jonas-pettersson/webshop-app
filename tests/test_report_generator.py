@@ -5,16 +5,15 @@ the shape of each report (sheets, row counts, key columns).
 """
 
 import openpyxl
-import pytest
 
 from src import config
 from src.markets import PASK
 from src.report_generator import (
-    generate_packlista,
     generate_hamtningslista,
-    generate_semlelista,
-    generate_masterlista,
     generate_lagerrapport,
+    generate_masterlista,
+    generate_packlista,
+    generate_semlelista,
 )
 
 EXCEL_ERROR_VALUES = {'#NULL!', '#DIV/0!', '#VALUE!', '#REF!', '#NAME?', '#NUM!', '#N/A'}

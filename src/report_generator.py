@@ -18,7 +18,6 @@ import pandas as pd
 from . import config
 from .excel_utils import ReportTemplate, dataframe_to_xlsx_bytes
 
-
 # Weekday names in Swedish
 WEEKDAY_DICT = {
     0: 'Mån',

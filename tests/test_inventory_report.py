@@ -1,20 +1,12 @@
 """Tests for inventory report (lagerrapport) processing."""
 
-import pytest
-import pandas as pd
-from pathlib import Path
 
-from src.data_loader import (
-    load_product_export,
-    load_products_report_export,
-    load_sku_mapping
-)
-from src.lagerrapport_processor import (
-    map_sku_to_sales_area,
-    get_tax_rate,
-    prepare_lagerrapport_data
-)
+import pandas as pd
+import pytest
+
 from src import config
+from src.data_loader import load_product_export, load_products_report_export, load_sku_mapping
+from src.lagerrapport_processor import get_tax_rate, map_sku_to_sales_area, prepare_lagerrapport_data
 
 
 class TestSKUMapping:
@@ -296,7 +288,8 @@ class TestInventoryReportWithRealData:
         missing_prices = products_with_sales[products_with_sales['Regular price'].isna()]
 
         # This should be very low or zero (unless products genuinely have no price)
-        missing_price_pct = len(missing_prices) / len(products_with_sales) * 100 if len(products_with_sales) > 0 else 0
+        total = len(products_with_sales)
+        missing_price_pct = len(missing_prices) / total * 100 if total > 0 else 0
 
         # Allow up to 5% missing (for edge cases), but should be much lower
         assert missing_price_pct < 5, \

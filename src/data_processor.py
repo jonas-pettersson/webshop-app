@@ -4,7 +4,6 @@ Combines orders, timeslots, products, and packing categories into
 a unified dataset for report generation.
 """
 
-from typing import Tuple
 
 import pandas as pd
 
@@ -13,7 +12,7 @@ def prepare_merge_inputs(
     timeslots_df: pd.DataFrame,
     products_df: pd.DataFrame,
     packing_df: pd.DataFrame
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Make the right-hand side of every join unique and free of missing keys.
 
     pandas matches NaN keys with each other and multiplies rows on duplicate
@@ -24,9 +23,12 @@ def prepare_merge_inputs(
     Used by both merge_all_data() and validation, so "which order lines end
     up in the reports" is defined in exactly one place.
     """
-    timeslots = timeslots_df.dropna(subset=['Email']).drop_duplicates(subset=['Email'], keep='first')
-    products = products_df.dropna(subset=['ArticleNumber']).drop_duplicates(subset=['ArticleNumber'], keep='first')
-    packing = packing_df.dropna(subset=['PackingCategoryKey']).drop_duplicates(subset=['PackingCategoryKey'], keep='first')
+    def unique_keys(df, key):
+        return df.dropna(subset=[key]).drop_duplicates(subset=[key], keep='first')
+
+    timeslots = unique_keys(timeslots_df, 'Email')
+    products = unique_keys(products_df, 'ArticleNumber')
+    packing = unique_keys(packing_df, 'PackingCategoryKey')
     return timeslots, products, packing
 
 

@@ -6,6 +6,7 @@ and calculating totals.
 """
 
 import pandas as pd
+
 from . import config
 
 UNKNOWN_SALES_AREA = 'Unknown'
@@ -23,7 +24,7 @@ def map_sku_to_sales_area(sku: str, mapping_df: pd.DataFrame) -> str:
     """
     if pd.isna(sku):
         return UNKNOWN_SALES_AREA
-    for prefix, area in zip(mapping_df['SKU_Prefix'], mapping_df['Sales_Area']):
+    for prefix, area in zip(mapping_df['SKU_Prefix'], mapping_df['Sales_Area'], strict=True):
         if str(sku).startswith(prefix):
             return area
     return UNKNOWN_SALES_AREA

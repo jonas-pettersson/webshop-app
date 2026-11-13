@@ -128,7 +128,7 @@ def show_validation_results(validation_result):
     st.subheader("Validation Results")
 
     # One metric per check
-    for col, (attr, label) in zip(st.columns(len(CHECKS)), CHECKS):
+    for col, (attr, label) in zip(st.columns(len(CHECKS)), CHECKS, strict=True):
         with col:
             st.metric(label, summary[attr] if summary[attr] > 0 else "✓")
 

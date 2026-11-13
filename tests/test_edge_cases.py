@@ -12,10 +12,10 @@ import pandas as pd
 import pytest
 
 from src import config
-from src.markets import MARKETS, PASK
 from src.data_loader import load_packing_categories
 from src.data_validator import remove_duplicate_bookings
 from src.excel_utils import set_cell_value
+from src.markets import MARKETS, PASK
 from src.report_generator import (
     SLOT_LABEL_NO_TIME,
     generate_hamtningslista,

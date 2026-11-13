@@ -137,7 +137,8 @@ class ReportTemplate:
     def copy_row_heights(self, sheet, source_row: int, target_row: int, count: int) -> None:
         """Give count rows from target_row the heights of the template rows from source_row."""
         for j in range(count):
-            sheet.row_dimensions[target_row + j].height =                 self.sheet.row_dimensions[source_row + j].height
+            template_height = self.sheet.row_dimensions[source_row + j].height
+            sheet.row_dimensions[target_row + j].height = template_height
 
     def to_bytes(self) -> bytes:
         """Remove the template sheet and return the finished .xlsx."""

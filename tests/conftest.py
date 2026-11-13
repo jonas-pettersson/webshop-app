@@ -1,7 +1,24 @@
 """Shared pytest fixtures for WebShop Report tests."""
 
 from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
+
+from src.data_loader import (
+    load_orders,
+    load_packing_categories,
+    load_product_export,
+    load_products,
+    load_products_report_export,
+    load_schedule,
+    load_sku_mapping,
+    load_timeslots,
+)
+from src.data_processor import merge_all_data, sort_for_reports
+from src.data_validator import remove_duplicate_bookings
+from src.lagerrapport_processor import prepare_lagerrapport_data
+from src.markets import PASK
 
 
 @pytest.fixture
@@ -61,23 +78,6 @@ def pask_schedule_file(pask_fixtures_dir):
 # ---------------------------------------------------------------------------
 # Pre-loaded pask datasets (session-scoped: loaded once, treat as read-only)
 # ---------------------------------------------------------------------------
-
-from types import SimpleNamespace
-
-from src.markets import PASK
-from src.data_loader import (
-    load_products,
-    load_orders,
-    load_timeslots,
-    load_packing_categories,
-    load_schedule,
-    load_product_export,
-    load_products_report_export,
-    load_sku_mapping,
-)
-from src.data_processor import merge_all_data, sort_for_reports
-from src.data_validator import remove_duplicate_bookings
-from src.lagerrapport_processor import prepare_lagerrapport_data
 
 _FIXTURES_PASK = Path(__file__).parent / 'fixtures' / 'pask'
 _TEMPLATES = Path(__file__).parent.parent / 'templates'
