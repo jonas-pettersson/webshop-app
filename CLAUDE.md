@@ -185,6 +185,18 @@ See `DEPLOYMENT.md` for detailed instructions.
 
 ## Testing
 
+### Automated Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Runs in CI on every push (`.github/workflows/tests.yml`). `tests/test_golden_master.py`
+pins every report's cell content; after an intended output change, run
+`UPDATE_GOLDEN=1 pytest tests/test_golden_master.py` and review `git diff tests/golden/`.
+See `tests/README.md`.
+
 ### Manual Testing
 
 Test the application by uploading real WordPress/WooCommerce exports through the web interface:

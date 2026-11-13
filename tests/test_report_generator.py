@@ -1,546 +1,80 @@
-"""Tests for report generation functions."""
+"""Structural tests for report generation.
 
+Cell-level content is pinned by test_golden_master.py; these tests check
+the shape of each report (sheets, row counts, key columns).
+"""
+
+import openpyxl
 import pytest
-import pandas as pd
-from pathlib import Path
-import tempfile
 
-from src.data_loader import (
-    load_products,
-    load_orders,
-    load_timeslots,
-    load_packing_categories,
-    load_schedule,
-    load_product_export,
-    load_products_report_export,
-    load_sku_mapping
-)
-from src.data_processor import merge_all_data, sort_for_reports
-from src.data_validator import remove_duplicate_bookings
-from src.lagerrapport_processor import prepare_lagerrapport_data
+from src import config
 from src.report_generator import (
     generate_packlista,
     generate_hamtningslista,
     generate_semlelista,
     generate_masterlista,
-    generate_lagerrapport
+    generate_lagerrapport,
 )
-from src import config
 
+EXCEL_ERROR_VALUES = {'#NULL!', '#DIV/0!', '#VALUE!', '#REF!', '#NAME?', '#NUM!', '#N/A'}
 
-class TestGeneratePacklista:
-    """Tests for generate_packlista() - packing lists report."""
 
-    def test_generate_packlista_pask(
-        self,
-        pask_product_export_file,
-        pask_orders_file,
-        pask_timeslots_file,
-        pask_fixtures_dir
-    ):
-        """Test generating packing lists with pask test data."""
-        # Load and process data
-        with open(pask_product_export_file, 'rb') as f:
-            df_products = load_products(f)
+def test_packlista_one_sheet_per_order(pask_data, templates_dir, tmp_path):
+    out = tmp_path / config.OUTPUT_FILENAME_PACKLISTA
+    generate_packlista(pask_data.all_data, templates_dir, out, config.MARKET_TYPE_PASK)
 
-        with open(pask_orders_file, 'rb') as f:
-            df_orders = load_orders(f)
+    wb = openpyxl.load_workbook(out)
+    expected = {f'PO_{n}' for n in pask_data.all_data['OrderNumber'].unique()}
+    assert set(wb.sheetnames) == expected
+    assert 'template' not in wb.sheetnames
 
-        with open(pask_timeslots_file, 'rb') as f:
-            df_timeslots = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
 
-        df_timeslots = remove_duplicate_bookings(df_timeslots)
+def test_hamtningslista_one_sheet_per_pickup_date(pask_data, templates_dir, tmp_path):
+    out = tmp_path / config.OUTPUT_FILENAME_HAMTNINGSLISTA
+    generate_hamtningslista(pask_data.all_data, pask_data.schedule, templates_dir, out)
 
-        df_packing_categories = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
+    wb = openpyxl.load_workbook(out)
+    expected = {f'Hämtas {d.date()}' for d in pask_data.all_data['PickUpDate'].unique()}
+    assert set(wb.sheetnames) == expected
 
-        df_merged = merge_all_data(
-            df_orders,
-            df_timeslots,
-            df_products,
-            df_packing_categories
-        )
-        df_merged = sort_for_reports(df_merged)
 
-        # Generate report
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "packlista_test.xlsx"
+def test_semlelista_single_sheet_with_all_semla_lines(pask_data, templates_dir, tmp_path):
+    out = tmp_path / config.OUTPUT_FILENAME_SEMLELISTA
+    generate_semlelista(pask_data.all_data, templates_dir, out)
 
-            workbook = generate_packlista(
-                df_merged,
-                market_type=config.MARKET_TYPE_PASK,
-                template_dir=pask_fixtures_dir,
-                output_path=output_path
-            )
+    wb = openpyxl.load_workbook(out)
+    assert wb.sheetnames == ['Semla-Lista']
 
-            # Check that workbook was created
-            assert workbook is not None
+    semla_orders = set(
+        pask_data.all_data.loc[
+            pask_data.all_data['ArticleNumber'] == config.ARTICLE_NUMBER_SEMLA,
+            'OrderNumber',
+        ]
+    )
+    assert semla_orders, "fixture is expected to contain semla orders"
+    sheet_values = {c.value for row in wb.active.iter_rows() for c in row}
+    assert semla_orders <= sheet_values
 
-            # Check that file was saved
-            assert output_path.exists()
 
-            # Check file size (should not be empty)
-            assert output_path.stat().st_size > 0
+def test_masterlista_one_row_per_order(pask_data, tmp_path):
+    out = tmp_path / config.OUTPUT_FILENAME_MASTERLISTA
+    generate_masterlista(pask_data.all_data, out)
 
-            # Load and check structure
-            import openpyxl
-            wb = openpyxl.load_workbook(output_path)
+    sheet = openpyxl.load_workbook(out).active
+    assert sheet.max_row - 1 == pask_data.all_data['OrderNumber'].nunique()
 
-            # Should have sheets for each pickup area
-            assert len(wb.sheetnames) > 0
 
-            # Each sheet should have data
-            for sheet_name in wb.sheetnames:
-                sheet = wb[sheet_name]
-                # Check that sheet is not empty
-                assert sheet.max_row > 1  # More than just header
+def test_lagerrapport_rows_match_inventory(pask_inventory, templates_dir, tmp_path):
+    out = tmp_path / config.OUTPUT_FILENAME_LAGERRAPPORT
+    generate_lagerrapport(pask_inventory.inventory, templates_dir, out)
 
+    wb = openpyxl.load_workbook(out)
+    assert wb.sheetnames == ['Content']
+    sheet = wb['Content']
 
-class TestGenerateHamtningslista:
-    """Tests for generate_hamtningslista() - pickup schedule report."""
+    skus = [sheet.cell(row=r, column=1).value for r in range(2, sheet.max_row + 1)]
+    assert skus == list(pask_inventory.inventory['SKU'])
 
-    def test_generate_hamtningslista_pask(
-        self,
-        pask_product_export_file,
-        pask_orders_file,
-        pask_timeslots_file,
-        pask_fixtures_dir
-    ):
-        """Test generating pickup schedule with pask test data."""
-        # Load and process data
-        with open(pask_product_export_file, 'rb') as f:
-            df_products = load_products(f)
-
-        with open(pask_orders_file, 'rb') as f:
-            df_orders = load_orders(f)
-
-        with open(pask_timeslots_file, 'rb') as f:
-            df_timeslots = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
-
-        df_timeslots = remove_duplicate_bookings(df_timeslots)
-
-        df_packing_categories = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
-
-        df_schedule = load_schedule(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
-
-        df_merged = merge_all_data(
-            df_orders,
-            df_timeslots,
-            df_products,
-            df_packing_categories
-        )
-        df_merged = sort_for_reports(df_merged)
-
-        # Generate report
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "hamtningslista_test.xlsx"
-
-            workbook = generate_hamtningslista(
-                df_merged,
-                df_schedule,
-                market_type=config.MARKET_TYPE_PASK,
-                template_dir=pask_fixtures_dir,
-                output_path=output_path
-            )
-
-            # Check that workbook was created
-            assert workbook is not None
-
-            # Check that file was saved
-            assert output_path.exists()
-
-            # Check file size
-            assert output_path.stat().st_size > 0
-
-            # Load and check structure
-            import openpyxl
-            wb = openpyxl.load_workbook(output_path)
-
-            # Should have sheets for each pickup date
-            assert len(wb.sheetnames) > 0
-
-            # Each sheet should have schedule data
-            for sheet_name in wb.sheetnames:
-                sheet = wb[sheet_name]
-                assert sheet.max_row > 1
-
-
-class TestGenerateSemlelista:
-    """Tests for generate_semlelista() - semla list report (pask only)."""
-
-    def test_generate_semlelista_pask(
-        self,
-        pask_product_export_file,
-        pask_orders_file,
-        pask_timeslots_file,
-        pask_fixtures_dir
-    ):
-        """Test generating semla list with pask test data."""
-        # Load and process data
-        with open(pask_product_export_file, 'rb') as f:
-            df_products = load_products(f)
-
-        with open(pask_orders_file, 'rb') as f:
-            df_orders = load_orders(f)
-
-        with open(pask_timeslots_file, 'rb') as f:
-            df_timeslots = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
-
-        df_timeslots = remove_duplicate_bookings(df_timeslots)
-
-        df_packing_categories = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
-
-        df_merged = merge_all_data(
-            df_orders,
-            df_timeslots,
-            df_products,
-            df_packing_categories
-        )
-        df_merged = sort_for_reports(df_merged)
-
-        # Generate report
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "semlelista_test.xlsx"
-
-            workbook = generate_semlelista(
-                df_merged,
-                template_dir=pask_fixtures_dir,
-                output_path=output_path
-            )
-
-            # Check that workbook was created
-            assert workbook is not None
-
-            # Check that file was saved
-            assert output_path.exists()
-
-            # Check file size
-            assert output_path.stat().st_size > 0
-
-            # Load and check structure
-            import openpyxl
-            wb = openpyxl.load_workbook(output_path)
-
-            # Should have at least one sheet
-            assert len(wb.sheetnames) > 0
-
-
-class TestGenerateMasterlista:
-    """Tests for generate_masterlista() - master order list."""
-
-    def test_generate_masterlista_pask(
-        self,
-        pask_product_export_file,
-        pask_orders_file,
-        pask_timeslots_file,
-        pask_fixtures_dir
-    ):
-        """Test generating master list with pask test data."""
-        # Load and process data
-        with open(pask_product_export_file, 'rb') as f:
-            df_products = load_products(f)
-
-        with open(pask_orders_file, 'rb') as f:
-            df_orders = load_orders(f)
-
-        with open(pask_timeslots_file, 'rb') as f:
-            df_timeslots = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
-
-        df_timeslots = remove_duplicate_bookings(df_timeslots)
-
-        df_packing_categories = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
-
-        df_merged = merge_all_data(
-            df_orders,
-            df_timeslots,
-            df_products,
-            df_packing_categories
-        )
-        df_merged = sort_for_reports(df_merged)
-
-        # Generate report
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "masterlista_test.xlsx"
-
-            workbook = generate_masterlista(
-                df_merged,
-                output_path=output_path
-            )
-
-            # Check that workbook was created
-            assert workbook is not None
-
-            # Check that file was saved
-            assert output_path.exists()
-
-            # Check file size
-            assert output_path.stat().st_size > 0
-
-            # Load and check structure
-            import openpyxl
-            wb = openpyxl.load_workbook(output_path)
-
-            # Should have one sheet
-            assert len(wb.sheetnames) >= 1
-
-            # Get first sheet
-            sheet = wb[wb.sheetnames[0]]
-
-            # Should have data rows
-            assert sheet.max_row > 1
-
-
-class TestGenerateLagerrapport:
-    """Tests for generate_lagerrapport() - inventory report."""
-
-    def test_generate_lagerrapport_pask(
-        self,
-        pask_product_export_file,
-        pask_products_report_file,
-        templates_dir
-    ):
-        """Test generating inventory report with pask test data."""
-        # Load data
-        with open(pask_product_export_file, 'rb') as f:
-            df_product_export = load_product_export(f)
-
-        with open(pask_products_report_file, 'rb') as f:
-            df_products_report = load_products_report_export(f)
-
-        df_sku_mapping = load_sku_mapping(templates_dir)
-
-        # Process inventory data
-        df_inventory = prepare_lagerrapport_data(
-            df_product_export,
-            df_products_report,
-            df_sku_mapping
-        )
-
-        # Generate report
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "lagerrapport_test.xlsx"
-
-            workbook = generate_lagerrapport(
-                df_inventory,
-                template_dir=templates_dir,
-                output_path=output_path
-            )
-
-            # Check that workbook was created
-            assert workbook is not None
-
-            # Check that file was saved
-            assert output_path.exists()
-
-            # Check file size
-            assert output_path.stat().st_size > 0
-
-            # Load and check structure
-            import openpyxl
-            wb = openpyxl.load_workbook(output_path)
-
-            # Should have sheets (one per sales area, plus summary)
-            assert len(wb.sheetnames) > 0
-
-            # Check that data was written
-            for sheet_name in wb.sheetnames:
-                sheet = wb[sheet_name]
-                # Should have more than header row
-                assert sheet.max_row > 1
-
-    def test_lagerrapport_decimal_calculations_correct(
-        self,
-        pask_product_export_file,
-        pask_products_report_file,
-        templates_dir
-    ):
-        """Test that inventory report calculations are correct (regression test for decimal notation)."""
-        # Load data
-        with open(pask_product_export_file, 'rb') as f:
-            df_product_export = load_product_export(f)
-
-        with open(pask_products_report_file, 'rb') as f:
-            df_products_report = load_products_report_export(f)
-
-        df_sku_mapping = load_sku_mapping(templates_dir)
-
-        # Process inventory data
-        df_inventory = prepare_lagerrapport_data(
-            df_product_export,
-            df_products_report,
-            df_sku_mapping
-        )
-
-        # Generate report
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "lagerrapport_test.xlsx"
-
-            workbook = generate_lagerrapport(
-                df_inventory,
-                template_dir=templates_dir,
-                output_path=output_path
-            )
-
-            # Load and verify calculations
-            import openpyxl
-            wb = openpyxl.load_workbook(output_path)
-
-            # Check a sheet with data
-            for sheet_name in wb.sheetnames:
-                sheet = wb[sheet_name]
-
-                # Find columns (they should be labeled in the template)
-                # We'll just check that numeric columns have numeric values
-                for row in sheet.iter_rows(min_row=2, max_row=min(10, sheet.max_row)):
-                    # Check that cells contain numeric values, not error values
-                    for cell in row:
-                        if cell.value is not None:
-                            # Should not be error values like #VALUE!, #DIV/0!, etc.
-                            assert not str(cell.value).startswith('#'), \
-                                f"Cell contains error value: {cell.value}"
-
-
-class TestFullPipeline:
-    """Integration tests for full report generation pipeline."""
-
-    def test_full_order_reports_pipeline_pask(
-        self,
-        pask_product_export_file,
-        pask_orders_file,
-        pask_timeslots_file,
-        pask_fixtures_dir
-    ):
-        """Test full order reports generation pipeline end-to-end."""
-        # Load all data
-        with open(pask_product_export_file, 'rb') as f:
-            df_products = load_products(f)
-
-        with open(pask_orders_file, 'rb') as f:
-            df_orders = load_orders(f)
-
-        with open(pask_timeslots_file, 'rb') as f:
-            df_timeslots = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
-
-        df_timeslots = remove_duplicate_bookings(df_timeslots)
-
-        df_packing_categories = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
-
-        df_schedule = load_schedule(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
-
-        # Process data
-        df_merged = merge_all_data(
-            df_orders,
-            df_timeslots,
-            df_products,
-            df_packing_categories
-        )
-        df_merged = sort_for_reports(df_merged)
-
-        # Generate all reports
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir_path = Path(tmpdir)
-
-            # Generate each report
-            packlista_path = tmpdir_path / "packlista.xlsx"
-            hamtning_path = tmpdir_path / "hamtningslista.xlsx"
-            semla_path = tmpdir_path / "semlelista.xlsx"
-            master_path = tmpdir_path / "masterlista.xlsx"
-
-            wb_packlista = generate_packlista(
-                df_merged,
-                market_type=config.MARKET_TYPE_PASK,
-                template_dir=pask_fixtures_dir,
-                output_path=packlista_path
-            )
-
-            wb_hamtning = generate_hamtningslista(
-                df_merged,
-                df_schedule,
-                market_type=config.MARKET_TYPE_PASK,
-                template_dir=pask_fixtures_dir,
-                output_path=hamtning_path
-            )
-
-            wb_semla = generate_semlelista(
-                df_merged,
-                template_dir=pask_fixtures_dir,
-                output_path=semla_path
-            )
-
-            wb_master = generate_masterlista(
-                df_merged,
-                output_path=master_path
-            )
-
-            # Verify all reports were generated
-            assert packlista_path.exists()
-            assert hamtning_path.exists()
-            assert semla_path.exists()
-            assert master_path.exists()
-
-            # All files should have content
-            assert packlista_path.stat().st_size > 0
-            assert hamtning_path.stat().st_size > 0
-            assert semla_path.stat().st_size > 0
-            assert master_path.stat().st_size > 0
-
-            print("\n✓ All order reports generated successfully for pask test data")
-
-    def test_full_inventory_report_pipeline_pask(
-        self,
-        pask_product_export_file,
-        pask_products_report_file,
-        templates_dir
-    ):
-        """Test full inventory report generation pipeline end-to-end."""
-        # Load data
-        with open(pask_product_export_file, 'rb') as f:
-            df_product_export = load_product_export(f)
-
-        with open(pask_products_report_file, 'rb') as f:
-            df_products_report = load_products_report_export(f)
-
-        df_sku_mapping = load_sku_mapping(templates_dir)
-
-        # Process
-        df_inventory = prepare_lagerrapport_data(
-            df_product_export,
-            df_products_report,
-            df_sku_mapping
-        )
-
-        # Generate report
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "lagerrapport.xlsx"
-
-            workbook = generate_lagerrapport(
-                df_inventory,
-                template_dir=templates_dir,
-                output_path=output_path
-            )
-
-            # Verify
-            assert output_path.exists()
-            assert output_path.stat().st_size > 0
-
-            print("\n✓ Inventory report generated successfully for pask test data")
+    errors = [c.coordinate for row in sheet.iter_rows() for c in row
+              if c.value in EXCEL_ERROR_VALUES]
+    assert not errors, f"Excel error values in cells: {errors[:10]}"

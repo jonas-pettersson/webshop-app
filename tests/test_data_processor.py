@@ -12,6 +12,7 @@ from src.data_loader import (
 )
 from src.data_processor import merge_all_data, sort_for_reports
 from src import config
+from src.data_validator import validate_data
 
 
 class TestProcessData:
@@ -128,44 +129,23 @@ class TestProcessData:
                                 if pd.notna(curr['PackingCategoryIndex']) and pd.notna(next_row['PackingCategoryIndex']):
                                     assert curr['PackingCategoryIndex'] <= next_row['PackingCategoryIndex']
 
-    def test_process_data_handles_missing_timeslots(
-        self,
-        pask_product_export_file,
-        pask_orders_file,
-        pask_timeslots_file,
-        pask_fixtures_dir
-    ):
-        """Test that orders without timeslots are still in merged data."""
-        # Load data
-        with open(pask_product_export_file, 'rb') as f:
-            df_products = load_products(f)
+    def test_orders_without_timeslot_are_excluded_but_reported(self, pask_data):
+        """Merge uses INNER joins (same as the original notebook).
 
-        with open(pask_orders_file, 'rb') as f:
-            df_orders = load_orders(f)
+        Orders without a timeslot booking cannot be scheduled, so they are
+        excluded from all reports. That is only acceptable because every
+        excluded order is listed in the validation result / diffs.xlsx.
+        """
+        merged_orders = set(pask_data.all_data['OrderNumber'])
+        dropped = set(pask_data.orders['OrderNumber']) - merged_orders
 
-        with open(pask_timeslots_file, 'rb') as f:
-            df_timeslots = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
+        result = validate_data(pask_data.orders, pask_data.timeslots,
+                               pask_data.products, pask_data.packing)
+        reported = set(result.orders_no_timeslot['OrderNumber'])
 
-        df_packing_categories = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
+        assert dropped, "fixture is expected to contain orders without timeslot"
+        assert dropped == reported,             "every order dropped by the merge must be reported by validation"
 
-        # Count unique orders before merge
-        unique_orders_before = df_orders['OrderNumber'].nunique()
-
-        # Process (uses LEFT join, so all orders should be present)
-        df_merged = merge_all_data(
-            df_orders,
-            df_timeslots,
-            df_products,
-            df_packing_categories
-        )
-        df_merged = sort_for_reports(df_merged)
-
-        # Count unique orders after merge
-        unique_orders_after = df_merged['OrderNumber'].nunique()
-
-        # All orders should still be present (LEFT join)
-        assert unique_orders_after == unique_orders_before, \
-            "All orders should be preserved after merge (LEFT join)"
+        # Orders that survive keep all their order lines
+        kept = pask_data.orders[pask_data.orders['OrderNumber'].isin(merged_orders)]
+        assert len(kept) == len(pask_data.all_data)

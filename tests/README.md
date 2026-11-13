@@ -6,8 +6,10 @@ This directory contains automated regression tests for the WebShop Report applic
 
 ```
 tests/
-├── conftest.py                    # Shared pytest fixtures
-├── fixtures/                      # Test data files
+├── conftest.py                    # Shared fixtures (incl. session-scoped `pask_data`, `pask_inventory`)
+├── golden/                        # Golden-master JSON snapshots of every generated report
+├── golden_master.py               # Snapshot/diff helpers
+├── fixtures/                      # Test data files (obfuscated)
 │   └── pask/                      # Test data for pask market type
 │       ├── orders.xlsx
 │       ├── tidsbokning.csv
@@ -19,7 +21,9 @@ tests/
 ├── test_data_processor.py         # Tests for data merging
 ├── test_data_validator.py         # Tests for data validation
 ├── test_inventory_report.py       # Tests for inventory report
-└── test_report_generator.py       # Tests for all report generation
+├── test_report_generator.py       # Structural tests for report generation
+├── test_golden_master.py          # Cell-level regression tests against golden/
+└── test_app_smoke.py              # Streamlit UI smoke tests (AppTest)
 ```
 
 ## Running Tests
@@ -135,13 +139,24 @@ This test ensures that:
 - Prices like "12.50" (English) parse correctly as 12.50
 - Both formats work in calculations
 
-### Full Pipeline Tests
+### Golden-Master Tests
 
-The `TestFullPipeline` class in `test_report_generator.py` runs complete end-to-end tests:
-- Loads all test data
-- Processes and validates
-- Generates all reports
-- Verifies output files are created and valid
+`test_golden_master.py` generates every report (packlista, hämtningslista,
+semlelista, masterlista, diffs, lagerrapport) from the pask fixture and
+compares cell values and merged ranges against `tests/golden/*.json`.
+Any change to report output - intended or not - fails this test with a
+cell-level diff such as `[PO_13] C7: expected 1, got 2`.
+
+After an **intended** output change (code or template), regenerate and review:
+
+```bash
+UPDATE_GOLDEN=1 pytest tests/test_golden_master.py   # rewrites tests/golden/*.json
+git diff tests/golden/                               # review every changed cell
+```
+
+Note: editing a layout template in `templates/` (packlista/hämtlista/semlelista/
+lagerrapport) changes the snapshots. Packing categories and schedule are read
+from the fixture copies in `fixtures/pask/`, so seasonal schedule edits do not.
 
 ## Adding New Tests
 
@@ -163,7 +178,8 @@ def test_new_feature(self, pask_fixtures_dir):
 
 ## Continuous Integration
 
-Tests are designed to run in CI/CD pipelines:
+GitHub Actions (`.github/workflows/tests.yml`) runs the full suite on every
+push to `main` and on pull requests. Tests are designed for CI:
 - No external dependencies required
 - All test data committed to repo
 - Fast execution (< 1 minute for full suite)
