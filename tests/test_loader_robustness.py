@@ -12,6 +12,7 @@ from src.data_loader import (
     load_orders,
     load_product_export,
     load_products,
+    load_products_report_export,
     load_schedule,
     load_timeslots,
 )
@@ -112,3 +113,61 @@ def test_timeslot_phone_numbers_keep_leading_zero():
 def test_csv_uploaded_as_excel_is_reported():
     with pytest.raises(InputFileError, match=r'orders\.xlsx could not be read as an Excel file'):
         load_orders(_csv('SKU,Short description\n#A#,Kaka\n'))
+
+
+# --- Sales report (WooCommerce Analytics) in English and German ---------------
+
+# Header lines exactly as exported by WooCommerce (English / German admin language)
+SALES_HEADER_EN = '"Product title",SKU,"Items sold","N. Revenue",Orders,Category,Variations,Status,Stock\n'
+SALES_HEADER_DE = ('Produkttitel,Artikelnummer,"Verkaufte Artikel","N.- Umsatz",Bestellungen,'
+                   'Kategorie,Varianten,Status,Bestand\n')
+SALES_ROWS = [
+    # title, sku, sold, revenue, orders, category, variations, status (EN, DE), stock
+    ('"Julmust 1 L       "', '#M_006#', '197', '410.42', '66', 'Dryck-Getränke', '0',
+     ('"In stock"', 'Vorrätig'), '3'),
+    ('"Kex &amp; Kakor"', '#BR_010#', '12', '30.5', '9', '"Kakor&amp;Kex - Kekse"', '0',
+     ('"Out of stock"', '"Nicht vorrätig"'), '0'),
+]
+
+
+def _sales_csv(lang: str) -> io.BytesIO:
+    header = SALES_HEADER_EN if lang == 'en' else SALES_HEADER_DE
+    lines = [','.join([*row[:7], row[7][0 if lang == 'en' else 1], row[8]]) for row in SALES_ROWS]
+    return _csv(header + '\n'.join(lines) + '\n', 'utf-8-sig')
+
+
+def test_german_sales_report_loads_like_english():
+    english = load_products_report_export(_sales_csv('en'))
+    german = load_products_report_export(_sales_csv('de'))
+
+    assert list(german.columns) == ['Product title', 'SKU', 'Items sold', 'N. Revenue', 'Category', 'Stock']
+    pd.testing.assert_frame_equal(german, english)
+
+
+def test_german_sales_report_gives_same_lagerrapport_data(templates_dir):
+    from src.pipeline import prepare_inventory
+
+    catalog = ('SKU,Name,Regular price,Stock,Tax status,Tax class\n'
+               '#M_006#,Julmust,2.5,3,taxable,reduzierter-preis\n'
+               '#BR_010#,Kex &amp; Kakor,3,0,taxable,\n')
+    english = prepare_inventory(_csv(catalog), _sales_csv('en'), templates_dir)
+    german = prepare_inventory(_csv(catalog), _sales_csv('de'), templates_dir)
+
+    pd.testing.assert_frame_equal(german.inventory, english.inventory)
+    assert len(german.inventory) == 2
+
+
+def test_html_entities_are_decoded():
+    df = load_products_report_export(_sales_csv('de'))
+    assert list(df['Product title'].str.strip()) == ['Julmust 1 L', 'Kex & Kakor']
+    assert list(df['Category']) == ['Dryck-Getränke', 'Kakor&Kex - Kekse']
+
+    catalog = load_product_export(_csv(
+        'SKU,Name,Regular price,Stock,Tax status,Tax class\n#A#,Ljus &amp; Tändstickor,1,1,taxable,\n'))
+    assert catalog['Name'].iloc[0] == 'Ljus & Tändstickor'
+
+
+def test_german_sales_report_with_missing_column_is_reported():
+    header = SALES_HEADER_DE.replace(',Bestand', '')
+    with pytest.raises(InputFileError, match=r'missing column\(s\): Stock'):
+        load_products_report_export(_csv(header + '"X",#A#,1,1,1,Kat,0,Vorrätig\n'))

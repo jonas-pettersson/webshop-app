@@ -8,6 +8,7 @@ a WordPress export with reordered or additional columns still loads
 correctly; a missing column raises InputFileError naming the column.
 """
 
+import html
 import io
 import zipfile
 from datetime import datetime
@@ -37,7 +38,8 @@ def _decode_text(file_obj) -> io.StringIO:
         return io.StringIO(raw.decode('latin_1'))
 
 
-def _read_columns(source, columns: dict, label: str, reader=pd.read_csv, **kwargs) -> pd.DataFrame:
+def _read_columns(source, columns: dict, label: str, reader=pd.read_csv,
+                  aliases: dict = None, **kwargs) -> pd.DataFrame:
     """Read the given columns from a CSV/Excel file, by name.
 
     Args:
@@ -45,6 +47,8 @@ def _read_columns(source, columns: dict, label: str, reader=pd.read_csv, **kwarg
         columns: {column name in file: column name in the DataFrame}, in output order
         label: File name shown in error messages, e.g. 'tidsbokning.csv'
         reader: pd.read_csv or pd.read_excel
+        aliases: {alternative header: column name in `columns`}, e.g. the German
+            headers of an export; used when the canonical header is absent
         **kwargs: Passed to the reader
 
     Raises:
@@ -59,7 +63,18 @@ def _read_columns(source, columns: dict, label: str, reader=pd.read_csv, **kwarg
         kind = 'an Excel' if reader is pd.read_excel else 'a CSV'
         raise InputFileError(f"{label} could not be read as {kind} file ({error}). "
                              f"Is this the right file / export?") from error
-    missing = [name for name in columns if name not in header]
+    # Header actually used in the file for each required column
+    source_names = {}
+    for name in columns:
+        if name in header:
+            source_names[name] = name
+        else:
+            alternatives = [alias for alias, canonical in (aliases or {}).items()
+                            if canonical == name and alias in header]
+            if alternatives:
+                source_names[name] = alternatives[0]
+
+    missing = [name for name in columns if name not in source_names]
     if missing:
         raise InputFileError(
             f"{label} is missing column(s): {', '.join(missing)}. "
@@ -68,13 +83,19 @@ def _read_columns(source, columns: dict, label: str, reader=pd.read_csv, **kwarg
     if hasattr(source, 'seek'):
         source.seek(0)
 
-    df = reader(source, usecols=list(columns), **kwargs)
-    return df[list(columns)].rename(columns=columns)
+    used = [source_names[name] for name in columns]
+    df = reader(source, usecols=used, **kwargs)
+    return df[used].rename(columns={source_names[name]: out for name, out in columns.items()})
 
 
 def _clean_sku(series: pd.Series) -> pd.Series:
     """SKUs as stripped strings (missing stays missing); also handles numeric SKUs."""
     return series.map(lambda sku: str(sku).strip() if pd.notna(sku) else sku)
+
+
+def _decode_html(series: pd.Series) -> pd.Series:
+    """WooCommerce exports text with HTML entities ('Ljus &amp; Tändstickor'); decode them."""
+    return series.map(lambda text: html.unescape(text) if isinstance(text, str) else text)
 
 
 def _to_number(series: pd.Series) -> pd.Series:
@@ -265,12 +286,27 @@ def load_product_export(file_obj: BinaryIO) -> pd.DataFrame:
     columns = ['SKU', 'Name', 'Regular price', 'Stock', 'Tax status', 'Tax class']
     df = _read_columns(file_obj, {c: c for c in columns}, 'wc-product-export.csv')
     df['SKU'] = _clean_sku(df['SKU'])
+    df['Name'] = _decode_html(df['Name'])
     df['Regular price'] = _to_number(df['Regular price'])
     return df
 
 
+# WooCommerce Analytics exports the sales report in the admin user's language.
+# German headers -> the English ones used here (the catalog export is always English).
+SALES_REPORT_GERMAN_HEADERS = {
+    'Produkttitel': 'Product title',
+    'Artikelnummer': 'SKU',
+    'Verkaufte Artikel': 'Items sold',
+    'N.- Umsatz': 'N. Revenue',
+    'Kategorie': 'Category',
+    'Bestand': 'Stock',
+}
+
+
 def load_products_report_export(file_obj: BinaryIO) -> pd.DataFrame:
     """Load product sales report from wc-products-report-export.csv for inventory report.
+
+    Accepts the export in English or German (SALES_REPORT_GERMAN_HEADERS).
 
     Args:
         file_obj: File object containing CSV data
@@ -279,8 +315,11 @@ def load_products_report_export(file_obj: BinaryIO) -> pd.DataFrame:
         DataFrame with columns: Product title, SKU, Items sold, N. Revenue, Category, Stock
     """
     columns = ['Product title', 'SKU', 'Items sold', 'N. Revenue', 'Category', 'Stock']
-    df = _read_columns(file_obj, {c: c for c in columns}, 'wc-products-report-export.csv')
+    df = _read_columns(file_obj, {c: c for c in columns}, 'wc-products-report-export.csv',
+                       aliases=SALES_REPORT_GERMAN_HEADERS)
     df['SKU'] = _clean_sku(df['SKU'])
+    df['Product title'] = _decode_html(df['Product title'])
+    df['Category'] = _decode_html(df['Category'])
     df['Items sold'] = _to_number(df['Items sold'])
     return df
 

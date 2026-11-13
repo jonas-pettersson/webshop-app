@@ -177,10 +177,12 @@ The semlelista is generated whenever semla (`#H_09#`) was ordered, i.e. in pract
 ### Input Files
 
 1. **wc-product-export.csv** - Full product catalog. Columns used: SKU, Name, Regular price, Stock, Tax status, Tax class
-2. **wc-products-report-export.csv** - WooCommerce products sales report. Columns used: Product title, SKU, Items sold, N. Revenue, Category, Stock
+2. **wc-products-report-export.csv** - WooCommerce Analytics products sales report. Columns used: Product title, SKU, Items sold, N. Revenue, Category, Stock.
+   Exported in the admin user's language: German headers (Produkttitel, Artikelnummer, …) are mapped via
+   `data_loader.SALES_REPORT_GERMAN_HEADERS`. (The catalog export is always English.)
 3. **templates/sku_sales_area_mapping.xlsx** (automatic) - sheet `Mapping`, columns `SKU_Prefix`, `Sales_Area` (e.g. `#BK_` → Böcker)
 
-Numbers accept both `12.50` and `12,50`.
+Numbers accept both `12.50` and `12,50`. HTML entities in names/categories (`&amp;`) are decoded.
 
 ### Processing (`lagerrapport_processor.prepare_lagerrapport_data`)
 

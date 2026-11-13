@@ -63,7 +63,8 @@ Download individual reports or all reports as a ZIP file.
 ## Inventory Report (Lagerrapport)
 
 1. Open the **📊 Inventory Report** tab
-2. Upload `wc-product-export.csv` (product catalog) and `wc-products-report-export.csv` (sales report)
+2. Upload `wc-product-export.csv` (product catalog) and `wc-products-report-export.csv` (sales report).
+   The sales report may be exported in English or German - both work.
 3. Click "Load and Validate Data" and review the warnings (e.g. SKUs with unknown sales area)
 4. Click "Generate Lagerrapport" and download `lagerrapport.xlsx`
 
