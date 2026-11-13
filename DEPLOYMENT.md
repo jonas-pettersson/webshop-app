@@ -89,6 +89,9 @@ To use your own domain with DNSimple:
 **If deployment fails:**
 - Check the Streamlit Cloud logs
 - Verify all dependencies in requirements.txt
+- The app needs **Python 3.10 or newer** (Streamlit 1.64). An "installer returned a
+  non-zero exit code" error usually means an older Python: change it in the app's
+  advanced settings (requires redeploying the app)
 - Make sure secrets are properly configured
 
 **If the app crashes:**

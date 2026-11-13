@@ -8,8 +8,11 @@
    ```
 
 2. **Set your password:**
-   - The password is already set in `.streamlit/secrets.toml` to `svenskakyrkan2024`
-   - Change it if needed by editing that file
+   ```bash
+   cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+   ```
+   - Edit `.streamlit/secrets.toml` and set `password = "..."`
+   - Never commit this file (the repository is public)
 
 3. **Run the application:**
    ```bash
@@ -21,6 +24,8 @@
    - Enter the password to access the application
 
 ## Using the Application
+
+The app has two tabs: **📦 Order Reports** (steps below) and **📊 Inventory Report**.
 
 ### Step 1: Select Market Type
 Choose from:
@@ -36,11 +41,14 @@ Upload three files exported from WordPress:
 
 ### Step 3: Run Validation
 Click "Run Validation" to:
-- Check for orders without time bookings
-- Check for time bookings without orders
-- Find duplicate bookings
-- Verify products exist in catalog
+- Check for orders without time bookings, and time bookings without orders
+- Find incomplete and duplicate bookings
+- Find bookings outside the pickup schedule
+- Verify products exist in catalog (and have unique SKUs)
 - Verify packing categories are defined
+
+All findings are warnings. A headline shows how many order lines will be missing
+from the packing lists; details are in `diffs.xlsx`. You can always continue.
 
 ### Step 4: Generate Reports
 Click "Generate All Reports" to create:
@@ -51,6 +59,15 @@ Click "Generate All Reports" to create:
 
 ### Step 5: Download
 Download individual reports or all reports as a ZIP file.
+
+## Inventory Report (Lagerrapport)
+
+1. Open the **📊 Inventory Report** tab
+2. Upload `wc-product-export.csv` (product catalog) and `wc-products-report-export.csv` (sales report)
+3. Click "Load and Validate Data" and review the warnings (e.g. SKUs with unknown sales area)
+4. Click "Generate Lagerrapport" and download `lagerrapport.xlsx`
+
+Sales areas come from SKU prefixes in `templates/sku_sales_area_mapping.xlsx`.
 
 ## Testing with Real Data
 
@@ -69,8 +86,8 @@ The application was validated during development using historical production dat
 ### "No module named 'streamlit'"
 Install dependencies: `pip install -r requirements.txt`
 
-### "FileNotFoundError: templates/"
-Make sure you're running from the webshop-app directory
+### "The bookings don't match the ... schedule"
+Check the selected market type, and that `templates/schedule_{market_type}.xlsx` has this season's dates
 
 ### Password not working
 Check `.streamlit/secrets.toml` exists and has the correct password

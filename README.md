@@ -1,10 +1,10 @@
 # WebShop Report Generator
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://svenska-kyrkan-webshop-reports.streamlit.app/)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Streamlit web application for generating packing lists, pickup schedules, and validation reports from WooCommerce/WordPress webshop orders. Built for Svenska Kyrkan i Wien's seasonal markets (Christmas and Easter).
+A Streamlit web application for generating packing lists, pickup schedules, validation reports and an inventory report from WooCommerce/WordPress webshop orders. Built for Svenska Kyrkan i Wien's seasonal markets (Christmas and Easter).
 
 🔗 **Live Demo:** [svenska-kyrkan-webshop-reports.streamlit.app](https://svenska-kyrkan-webshop-reports.streamlit.app/)
 
@@ -15,6 +15,8 @@ A Streamlit web application for generating packing lists, pickup schedules, and 
 - ✅ **Data validation** with comprehensive error reporting
 - 📊 **Excel report generation** with professional formatting
 - 📥 **Bulk download** of all reports as ZIP
+- 📦 **Inventory report** (lagerrapport) with sales per product and sales area
+- 🛡️ **Nothing silently dropped** - every data issue is reported, reports are still generated
 - 🎯 **Market-specific** templates (Christmas, Easter markets)
 - 🚀 **Zero-installation** - runs entirely in the browser
 
@@ -29,22 +31,23 @@ A Streamlit web application for generating packing lists, pickup schedules, and 
 
 ```
 webshop-app/
-├── app.py                    # Streamlit UI (520 lines)
+├── app.py                        # Streamlit UI
 ├── src/
-│   ├── config.py            # Market types & constants
-│   ├── excel_utils.py       # Template manipulation
-│   ├── data_loader.py       # CSV/Excel import
-│   ├── data_validator.py    # Data validation
-│   ├── data_processor.py    # Data merging
-│   └── report_generator.py  # Excel report creation
-├── templates/               # 12 Excel templates (market-specific)
+│   ├── pipeline.py               # End-to-end report pipelines (UI-independent)
+│   ├── config.py                 # Market types & constants
+│   ├── data_loader.py            # CSV/Excel import
+│   ├── data_validator.py         # Data validation
+│   ├── data_processor.py         # Data merging
+│   ├── report_generator.py       # Excel report creation
+│   ├── lagerrapport_processor.py # Inventory report data
+│   └── excel_utils.py            # Template manipulation
+├── templates/                    # 13 Excel templates
+├── tests/                        # pytest suite incl. golden-master snapshots
 ├── .streamlit/
-│   ├── config.toml         # Streamlit settings
-│   └── secrets.toml        # Password (not in git)
-└── requirements.txt        # Python dependencies
+│   ├── config.toml               # Streamlit settings
+│   └── secrets.toml              # Password (not in git)
+└── requirements.txt              # Pinned Python dependencies
 ```
-
-**Total:** ~1,540 lines of business logic + 520 lines UI
 
 ## Quick Start
 
@@ -83,14 +86,17 @@ Visit the deployed application: [svenska-kyrkan-webshop-reports.streamlit.app](h
 
 ## Testing
 
-Test the application using real WordPress/WooCommerce exports:
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
 
-1. Select your market type
-2. Upload the three required files through the web interface
-3. Run validation and review any issues
-4. Generate and download reports
+The suite runs in GitHub Actions on every push. Golden-master tests compare every
+generated report cell by cell against snapshots built from obfuscated test data, so
+any unintended output change fails the build. See [tests/README.md](tests/README.md).
 
-The application was validated during development against historical production data to ensure identical behavior to the original Jupyter notebook implementation.
+The application was originally validated against historical production data to ensure
+identical behavior to the original Jupyter notebook implementation.
 
 ## Use Cases
 
