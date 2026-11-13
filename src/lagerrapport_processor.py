@@ -8,40 +8,32 @@ and calculating totals.
 import pandas as pd
 from . import config
 
+UNKNOWN_SALES_AREA = 'Unknown'
+
 
 def map_sku_to_sales_area(sku: str, mapping_df: pd.DataFrame) -> str:
-    """Map single SKU to sales area using prefix matching.
+    """Map a SKU to its sales area by prefix (first matching prefix wins).
 
     Args:
         sku: Product SKU to map
         mapping_df: DataFrame with SKU_Prefix and Sales_Area columns
 
     Returns:
-        str: Sales area name or "Unknown" if no prefix matches
+        str: Sales area name, or UNKNOWN_SALES_AREA if no prefix matches
     """
     if pd.isna(sku):
-        return "Unknown"
-
-    sku_str = str(sku)
-    for _, row in mapping_df.iterrows():
-        if sku_str.startswith(row['SKU_Prefix']):
-            return row['Sales_Area']
-
-    return "Unknown"
+        return UNKNOWN_SALES_AREA
+    for prefix, area in zip(mapping_df['SKU_Prefix'], mapping_df['Sales_Area']):
+        if str(sku).startswith(prefix):
+            return area
+    return UNKNOWN_SALES_AREA
 
 
 def get_tax_rate(tax_class: str) -> float:
-    """Lookup tax rate from config.TAX_RATES.
-
-    Args:
-        tax_class: Tax class string from product data
-
-    Returns:
-        float: Tax rate (0.00-0.20)
-    """
+    """Tax rate for a WooCommerce tax class (standard rate if unknown/missing)."""
     if pd.isna(tax_class):
-        return config.TAX_RATES[None]
-    return config.TAX_RATES.get(tax_class, config.TAX_RATES[None])
+        return config.STANDARD_TAX_RATE
+    return config.TAX_RATES.get(tax_class, config.STANDARD_TAX_RATE)
 
 
 def prepare_lagerrapport_data(

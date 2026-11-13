@@ -29,6 +29,7 @@ from .data_validator import (
     generate_diffs_report,
     remove_duplicate_bookings,
     validate_data,
+    InventoryValidationResult,
     validate_inventory_data,
 )
 from .excel_utils import dataframe_to_xlsx_bytes
@@ -131,7 +132,7 @@ def build_order_reports(inputs: OrderInputs, template_dir: Path,
 @dataclass
 class InventoryResult:
     inventory: pd.DataFrame
-    validation: dict
+    validation: InventoryValidationResult
 
 
 def prepare_inventory(product_export_file, products_report_file,

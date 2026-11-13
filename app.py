@@ -37,6 +37,16 @@ REPORT_LABELS = {
     config.OUTPUT_FILENAME_MASTERLISTA: "📥 Masterlista (Master List)",
 }
 
+# Inventory checks shown as expanders: (attribute, title, description, columns)
+INVENTORY_CHECKS = [
+    ('unmapped_skus', "Unmapped SKUs", "Products with unknown sales area:",
+     ['SKU', 'Product title', 'Category (SKUT)']),
+    ('missing_prices', "Missing Prices", "Products with missing price data:",
+     ['SKU', 'Product title', 'Regular price']),
+    ('missing_stock', "Missing Stock", "Products with missing stock data:",
+     ['SKU', 'Product title', 'Stock']),
+]
+
 # Session state owned by each workflow; cleared when its inputs change
 ORDER_STATE_KEYS = ['order_inputs', 'validation_result', 'diffs', 'reports']
 INVENTORY_STATE_KEYS = ['inventory_result', 'lagerrapport']
@@ -383,30 +393,22 @@ def inventory_tab():
     st.divider()
     validation = inventory_result.validation
 
-    if validation['warnings']:
+    if validation.warnings:
         st.warning("⚠️ Validation Warnings")
-        for warning in validation['warnings']:
+        for warning in validation.warnings:
             st.write(warning)
 
-        if validation['sku_mismatches']:
-            with st.expander(f"SKU Mismatches ({len(validation['sku_mismatches'])})"):
+        if validation.sku_mismatches:
+            with st.expander(f"SKU Mismatches ({len(validation.sku_mismatches)})"):
                 st.write("SKUs in sales report but not in product export:")
-                st.dataframe(pd.DataFrame({'SKU': validation['sku_mismatches']}))
+                st.dataframe(pd.DataFrame({'SKU': validation.sku_mismatches}))
 
-        if len(validation['unmapped_skus']) > 0:
-            with st.expander(f"Unmapped SKUs ({len(validation['unmapped_skus'])})"):
-                st.write("Products with unknown sales area:")
-                st.dataframe(validation['unmapped_skus'][['SKU', 'Product title', 'Category (SKUT)']])
-
-        if len(validation['missing_prices']) > 0:
-            with st.expander(f"Missing Prices ({len(validation['missing_prices'])})"):
-                st.write("Products with missing price data:")
-                st.dataframe(validation['missing_prices'][['SKU', 'Product title', 'Regular price']])
-
-        if len(validation['missing_stock']) > 0:
-            with st.expander(f"Missing Stock ({len(validation['missing_stock'])})"):
-                st.write("Products with missing stock data:")
-                st.dataframe(validation['missing_stock'][['SKU', 'Product title', 'Stock']])
+        for attr, title, description, columns in INVENTORY_CHECKS:
+            df = getattr(validation, attr)
+            if len(df) > 0:
+                with st.expander(f"{title} ({len(df)})"):
+                    st.write(description)
+                    st.dataframe(df[columns])
     else:
         st.success("✅ All validation checks passed!")
 

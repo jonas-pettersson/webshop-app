@@ -14,6 +14,7 @@ from src.data_validator import (
     validate_data,
     remove_duplicate_bookings,
     validate_inventory_data,
+    InventoryValidationResult,
     ValidationResult,
 )
 
@@ -214,15 +215,11 @@ class TestValidateInventoryData:
             pask_inventory.inventory,
         )
 
-        assert set(result) == {
-            'is_valid', 'warnings', 'sku_mismatches',
-            'unmapped_skus', 'missing_prices', 'missing_stock',
-        }
-        assert isinstance(result['is_valid'], bool)
-        assert isinstance(result['warnings'], list)
-        assert isinstance(result['sku_mismatches'], list)
-        for key in ('unmapped_skus', 'missing_prices', 'missing_stock'):
-            assert isinstance(result[key], pd.DataFrame), key
+        assert isinstance(result, InventoryValidationResult)
+        assert isinstance(result.warnings, list)
+        assert isinstance(result.sku_mismatches, list)
+        for attr in ('unmapped_skus', 'missing_prices', 'missing_stock'):
+            assert isinstance(getattr(result, attr), pd.DataFrame), attr
 
     def test_detects_missing_prices_and_sku_mismatch(self):
         product_export = pd.DataFrame({'SKU': ['#T1#', '#T2#']})
@@ -236,9 +233,8 @@ class TestValidateInventoryData:
 
         result = validate_inventory_data(product_export, products_report, merged)
 
-        assert result['is_valid'] is False
-        assert result['sku_mismatches'] == ['#ONLY_IN_REPORT#']
-        assert list(result['unmapped_skus']['SKU']) == ['#T2#']
-        assert list(result['missing_prices']['SKU']) == ['#T2#']
-        assert list(result['missing_stock']['SKU']) == ['#T2#']
-        assert len(result['warnings']) == 4
+        assert result.sku_mismatches == ['#ONLY_IN_REPORT#']
+        assert list(result.unmapped_skus['SKU']) == ['#T2#']
+        assert list(result.missing_prices['SKU']) == ['#T2#']
+        assert list(result.missing_stock['SKU']) == ['#T2#']
+        assert len(result.warnings) == 4

@@ -7,12 +7,14 @@ All findings are warnings: report generation always proceeds, and every
 affected row is listed in diffs.xlsx so nothing disappears silently.
 """
 
-from typing import Dict
+from dataclasses import dataclass
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 
 from .data_processor import prepare_merge_inputs
+from .lagerrapport_processor import UNKNOWN_SALES_AREA
 from .excel_utils import dataframe_to_xlsx_bytes
 
 
@@ -265,65 +267,48 @@ def remove_duplicate_bookings(timeslots_df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([deduped, timeslots_df[~has_email]]).sort_index()
 
 
+@dataclass
+class InventoryValidationResult:
+    """Inventory (lagerrapport) validation findings. All are warnings."""
+
+    sku_mismatches: list         # SKUs in the sales report but not in the product export
+    unmapped_skus: pd.DataFrame  # products whose sales area is unknown
+    missing_prices: pd.DataFrame
+    missing_stock: pd.DataFrame
+
+    @property
+    def warnings(self) -> List[str]:
+        """One summary message per check that found something."""
+        messages = [
+            (len(self.sku_mismatches), "⚠️ {} SKU(s) not found in product export"),
+            (len(self.unmapped_skus), "⚠️ {} product(s) have unknown sales area"),
+            (len(self.missing_prices), "⚠️ {} product(s) have missing price data"),
+            (len(self.missing_stock), "ℹ️ {} product(s) have missing stock data"),
+        ]
+        return [text.format(count) for count, text in messages if count > 0]
+
+
 def validate_inventory_data(
     product_export_df: pd.DataFrame,
     products_report_df: pd.DataFrame,
     merged_df: pd.DataFrame
-) -> dict:
+) -> InventoryValidationResult:
     """Validate inventory data for lagerrapport generation.
-
-    Checks for data consistency issues:
-    - SKU mismatches (critical): SKUs in sales report but not in product catalog
-    - Unmapped SKUs (warning): Products with no sales area mapping
-    - Missing prices (warning): Products without price data
-    - Missing stock (info): Products without stock data
 
     Args:
         product_export_df: Full product catalog DataFrame
         products_report_df: Sales report DataFrame
-        merged_df: Merged data with Category (SKUT) column added
+        merged_df: Output of prepare_lagerrapport_data()
 
     Returns:
-        dict with:
-        - is_valid: bool (False if critical errors found)
-        - warnings: list of warning messages
-        - sku_mismatches: list of SKUs in report but not in export
-        - unmapped_skus: DataFrame of products with Unknown sales area
-        - missing_prices: DataFrame of products with missing prices
-        - missing_stock: DataFrame of products with missing stock
+        InventoryValidationResult
     """
-    warnings = []
-    is_valid = True
-
-    # Check for SKU mismatches (critical)
     report_skus = set(products_report_df['SKU'].dropna())
     export_skus = set(product_export_df['SKU'].dropna())
-    sku_mismatches = list(report_skus - export_skus)
 
-    if sku_mismatches:
-        is_valid = False
-        warnings.append(f"⚠️ {len(sku_mismatches)} SKU(s) not found in product export")
-
-    # Check for unmapped SKUs (warning)
-    unmapped_skus = merged_df[merged_df['Category (SKUT)'] == 'Unknown']
-    if len(unmapped_skus) > 0:
-        warnings.append(f"⚠️ {len(unmapped_skus)} product(s) have unknown sales area")
-
-    # Check for missing prices (warning)
-    missing_prices = merged_df[merged_df['Regular price'].isna()]
-    if len(missing_prices) > 0:
-        warnings.append(f"⚠️ {len(missing_prices)} product(s) have missing price data")
-
-    # Check for missing stock (info)
-    missing_stock = merged_df[merged_df['Stock'].isna()]
-    if len(missing_stock) > 0:
-        warnings.append(f"ℹ️ {len(missing_stock)} product(s) have missing stock data")
-
-    return {
-        'is_valid': is_valid,
-        'warnings': warnings,
-        'sku_mismatches': sku_mismatches,
-        'unmapped_skus': unmapped_skus,
-        'missing_prices': missing_prices,
-        'missing_stock': missing_stock
-    }
+    return InventoryValidationResult(
+        sku_mismatches=sorted(report_skus - export_skus),
+        unmapped_skus=merged_df[merged_df['Category (SKUT)'] == UNKNOWN_SALES_AREA],
+        missing_prices=merged_df[merged_df['Regular price'].isna()],
+        missing_stock=merged_df[merged_df['Stock'].isna()],
+    )

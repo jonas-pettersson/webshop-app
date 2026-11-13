@@ -91,4 +91,4 @@ def test_inventory_pipeline(pask_fixtures_dir, templates_dir):
         result = prepare_inventory(e, r, templates_dir)
     reports = build_lagerrapport(result.inventory, templates_dir)
     assert list(reports) == [config.OUTPUT_FILENAME_LAGERRAPPORT]
-    assert 'warnings' in result.validation
+    assert isinstance(result.validation.warnings, list)

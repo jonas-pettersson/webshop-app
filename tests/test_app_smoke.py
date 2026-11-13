@@ -115,3 +115,31 @@ def test_order_workflow_end_to_end():
     assert not at.exception
     assert not any('Validation Results' in s.value for s in at.subheader)
     assert '📦 Download All Reports (ZIP)' not in _download_labels(at)
+
+
+INVENTORY_UPLOADS = {
+    'Product Export (CSV)': ('wc-product-export.csv', 'text/csv'),
+    'Products Report (CSV)': ('wc-products-report-export.csv', 'text/csv'),
+}
+
+
+@pytest.mark.slow
+def test_inventory_workflow_end_to_end():
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.secrets['password'] = PASSWORD
+    at.run()
+    at.text_input[0].input(PASSWORD).run()
+
+    for uploader in at.file_uploader:
+        if uploader.label in INVENTORY_UPLOADS:
+            name, mime = INVENTORY_UPLOADS[uploader.label]
+            uploader.set_value((name, (FIXTURES / name).read_bytes(), mime))
+    at.run()
+
+    _button(at, '▶️ Load and Validate Data').click().run()
+    assert not at.exception
+    assert any('products with sales activity' in s.value for s in at.success)
+
+    _button(at, '▶️ Generate Lagerrapport').click().run()
+    assert not at.exception
+    assert '📥 Download Lagerrapport' in _download_labels(at)

@@ -53,12 +53,12 @@ class TestTaxRate:
 
     def test_get_tax_rate_none(self):
         """Test None/NaN tax class."""
-        assert get_tax_rate(None) == config.TAX_RATES[None]
-        assert get_tax_rate(pd.NA) == config.TAX_RATES[None]
+        assert get_tax_rate(None) == config.STANDARD_TAX_RATE
+        assert get_tax_rate(pd.NA) == config.STANDARD_TAX_RATE
 
     def test_get_tax_rate_unknown(self):
         """Test unknown tax class falls back to None rate."""
-        assert get_tax_rate('unknown-class') == config.TAX_RATES[None]
+        assert get_tax_rate('unknown-class') == config.STANDARD_TAX_RATE
 
 
 class TestInventoryReportProcessing:
