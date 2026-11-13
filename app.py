@@ -15,6 +15,7 @@ import streamlit as st
 
 from src import config
 from src.data_validator import CHECKS
+from src.markets import JULMARKNAD, MARKETS
 from src.pipeline import (
     build_diffs_report,
     build_lagerrapport,
@@ -134,7 +135,7 @@ def show_validation_results(validation_result):
     outside = summary['bookings_outside_schedule']
     if outside > 0 and outside >= 0.5 * len(st.session_state.order_inputs.timeslots):
         st.warning(
-            f"⚠️ {outside} bookings are not in the **{st.session_state.market_type}** "
+            f"⚠️ {outside} bookings are not in the **{st.session_state.order_inputs.market.label}** "
             f"pickup schedule. Did you select the right market type?"
         )
 
@@ -170,16 +171,19 @@ def order_reports_tab():
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        market_type = st.selectbox(
+        market_key = st.selectbox(
             "Market Type",
-            options=config.MARKET_TYPES,
-            index=config.MARKET_TYPES.index(st.session_state.market_type),
-            help="Select the type of market event"
+            options=list(MARKETS),
+            format_func=lambda key: MARKETS[key].label,
+            key='market_key',
+            help="Chooses the packing categories, packing-list layout and pickup "
+                 "schedule. The WordPress exports are the same for all markets."
         )
-        st.session_state.market_type = market_type
+        market = MARKETS[market_key]
 
     with col2:
-        st.info(f"**Selected:** {market_type.capitalize()}")
+        files = ', '.join(f'`{p.name}`' for p in market.template_files(TEMPLATE_DIR))
+        st.info(f"**Templates:** {files}")
 
     st.divider()
 
@@ -218,7 +222,7 @@ def order_reports_tab():
 
     reset_if_inputs_changed(
         'order_fingerprint',
-        (market_type, upload_id(products_file), upload_id(orders_file), upload_id(timeslots_file)),
+        (market.key, upload_id(products_file), upload_id(orders_file), upload_id(timeslots_file)),
         ORDER_STATE_KEYS,
     )
 
@@ -238,7 +242,7 @@ def order_reports_tab():
         with st.spinner("Loading data..."):
             try:
                 st.session_state.order_inputs = load_order_inputs(
-                    products_file, orders_file, timeslots_file, market_type, TEMPLATE_DIR
+                    products_file, orders_file, timeslots_file, market, TEMPLATE_DIR
                 )
                 st.success("✅ Data loaded successfully!")
             except Exception as e:
@@ -308,7 +312,7 @@ def order_reports_tab():
         st.download_button(
             label="📦 Download All Reports (ZIP)",
             data=zip_reports({**st.session_state.diffs, **reports}),
-            file_name=f'webshop_reports_{st.session_state.order_inputs.market_type}.zip',
+            file_name=f'webshop_reports_{st.session_state.order_inputs.market.key}.zip',
             mime='application/zip',
             type="primary"
         )
@@ -443,8 +447,7 @@ def main():
     if not check_password():
         st.stop()
 
-    if 'market_type' not in st.session_state:
-        st.session_state.market_type = config.MARKET_TYPE_JULMARKNAD
+    st.session_state.setdefault('market_key', JULMARKNAD.key)
 
     # Header
     st.title("📊 WebShop Report Generator")

@@ -25,7 +25,8 @@ The app has two independent workflows (tabs):
 webshop-app/
 ├── app.py                        # Streamlit UI: auth, uploads, session state, downloads
 ├── src/
-│   ├── config.py                 # Market types, file names, tax rates
+│   ├── config.py                 # File names, article numbers, tax rates
+│   ├── markets.py                # Market types -> which templates they use
 │   ├── data_loader.py            # CSV/Excel import + normalization
 │   ├── data_validator.py         # Validation checks, diffs.xlsx, inventory validation
 │   ├── data_processor.py         # Merging orders/timeslots/products/packing
@@ -54,7 +55,8 @@ webshop-app/
 - **report_generator.py** - packlista, hämtningslista, semlelista, masterlista, lagerrapport
 - **lagerrapport_processor.py** - Inner join of product export with sales report, SKU-prefix → sales area, totals
 - **excel_utils.py** - Named-range lookup, `insert_row_and_copy_format()`, `set_cell_value()`, `dataframe_to_xlsx_bytes()`
-- **config.py** - Market type constants, input/output/template file names, `TAX_RATES`
+- **markets.py** - `MarketProfile` per market (`JULMARKNAD`, `JULMATEN`, `PASK`, `MARKETS`); resolves the market's template paths
+- **config.py** - Output/template file names, `ARTICLE_NUMBER_SEMLA`, `TAX_RATES`
 
 ## Design Rules
 
@@ -120,7 +122,7 @@ The app will open at http://localhost:8501
 
 All WordPress exports have the same format (there are two WordPress instances:
 one for julmaten, one shared by julmarknad and påskmarknad). The market type only
-selects templates, which differ per market:
+selects templates, which differ per market (`src/markets.py`):
 
 | Template | Differs by |
 |---|---|
@@ -128,7 +130,7 @@ selects templates, which differ per market:
 | `packlista_template_*` | footer labels |
 | `schedule_*` | pickup dates/times |
 
-The semlelista is only generated for `pask`.
+The semlelista is generated whenever semla (`#H_09#`) was ordered, i.e. in practice at påsk.
 
 ### Generated Reports
 
@@ -147,7 +149,7 @@ The semlelista is only generated for `pask`.
 
 3. **hämtningslista.xlsx** - One sheet per pickup date, every scheduled slot (empty or filled), plus flagged off-schedule / no-time slots
 
-4. **semlelista.xlsx** - Semla orders (`#H_09#`) grouped by date and hour (pask only)
+4. **semlelista.xlsx** - Semla orders (`#H_09#`) grouped by date and hour (only if semla was ordered)
 
 5. **masterlista.xlsx** - One row per order
 
@@ -290,8 +292,8 @@ match the selected market's schedule).
 
 ### Adding New Market Type
 
-1. Add constant to `src/config.py` and to `MARKET_TYPES`
-2. Add templates to `templates/`:
+1. Add a `MarketProfile(...)` line to `src/markets.py` and include it in `MARKETS`
+2. Add templates to `templates/` (`test_every_market_has_its_templates` checks they exist):
    - `packlista_template_{new_type}.xlsx`
    - `placeringsnycklar_{new_type}.xlsx`
    - `schedule_{new_type}.xlsx`

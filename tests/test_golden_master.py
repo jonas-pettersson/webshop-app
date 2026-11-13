@@ -12,6 +12,7 @@ from datetime import datetime
 import pytest
 
 from src import config, report_generator
+from src.markets import PASK
 from src.data_validator import generate_diffs_report, validate_data
 
 from .golden_master import diff_snapshots, load_golden, save_golden, snapshot_workbook
@@ -34,8 +35,7 @@ def frozen_clock(monkeypatch):
 
 def _build(name, data, inventory, templates_dir) -> bytes:
     if name == 'packlista':
-        return report_generator.generate_packlista(
-            data.all_data, templates_dir, config.MARKET_TYPE_PASK)
+        return report_generator.generate_packlista(data.all_data, PASK.packlista_template(templates_dir))
     if name == 'hamtningslista':
         return report_generator.generate_hamtningslista(
             data.all_data, data.schedule, templates_dir)

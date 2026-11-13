@@ -8,6 +8,7 @@ import openpyxl
 import pytest
 
 from src import config
+from src.markets import PASK
 from src.report_generator import (
     generate_packlista,
     generate_hamtningslista,
@@ -21,7 +22,7 @@ EXCEL_ERROR_VALUES = {'#NULL!', '#DIV/0!', '#VALUE!', '#REF!', '#NAME?', '#NUM!'
 
 def test_packlista_one_sheet_per_order(pask_data, templates_dir, tmp_path):
     out = tmp_path / config.OUTPUT_FILENAME_PACKLISTA
-    out.write_bytes(generate_packlista(pask_data.all_data, templates_dir, config.MARKET_TYPE_PASK))
+    out.write_bytes(generate_packlista(pask_data.all_data, PASK.packlista_template(templates_dir)))
 
     wb = openpyxl.load_workbook(out)
     expected = {f'PO_{n}' for n in pask_data.all_data['OrderNumber'].unique()}

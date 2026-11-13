@@ -15,8 +15,8 @@ tests/
 │       ├── tidsbokning.csv
 │       ├── wc-product-export.csv
 │       ├── wc-products-report-export.csv
-│       ├── placeringsnycklar.xlsx
-│       └── schedule.xlsx
+│       ├── placeringsnycklar_pask.xlsx   # copy of the template (pins test input)
+│       └── schedule_pask.xlsx            # copy of the template (pins test input)
 ├── test_data_loader.py            # Tests for CSV/Excel loading
 ├── test_data_processor.py         # Tests for data merging
 ├── test_data_validator.py         # Tests for data validation

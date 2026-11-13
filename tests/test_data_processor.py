@@ -12,6 +12,7 @@ from src.data_loader import (
 )
 from src.data_processor import merge_all_data, sort_for_reports
 from src import config
+from src.markets import PASK
 from src.data_validator import validate_data
 
 
@@ -34,12 +35,9 @@ class TestProcessData:
             df_orders = load_orders(f)
 
         with open(pask_timeslots_file, 'rb') as f:
-            df_timeslots = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
+            df_timeslots = load_timeslots(f)
 
-        df_packing_categories = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
+        df_packing_categories = load_packing_categories(PASK.packing_categories(pask_fixtures_dir))
 
         # Process (merge all data)
         df_merged = merge_all_data(
@@ -94,12 +92,9 @@ class TestProcessData:
             df_orders = load_orders(f)
 
         with open(pask_timeslots_file, 'rb') as f:
-            df_timeslots = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
+            df_timeslots = load_timeslots(f)
 
-        df_packing_categories = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
+        df_packing_categories = load_packing_categories(PASK.packing_categories(pask_fixtures_dir))
 
         # Process
         df_merged = merge_all_data(

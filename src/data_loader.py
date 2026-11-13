@@ -6,8 +6,7 @@ and template files.
 
 from datetime import datetime
 from pathlib import Path
-from typing import BinaryIO, Union
-import shutil
+from typing import BinaryIO
 
 import pandas as pd
 
@@ -73,21 +72,16 @@ def load_orders(file_obj: BinaryIO) -> pd.DataFrame:
     return df
 
 
-def load_timeslots(file_obj: BinaryIO, market_type: str) -> pd.DataFrame:
+def load_timeslots(file_obj: BinaryIO) -> pd.DataFrame:
     """Load and format timeslot bookings from WP Time Slots plugin CSV export.
-
-    Handles different date formats between market types and encoding issues.
 
     Args:
         file_obj: File object containing CSV data
-        market_type: One of config.MARKET_TYPES (affects date parsing)
 
     Returns:
         DataFrame with columns: OrderTime, Email, PickUpDate, PickUpTime,
                                 PickUpDateTime, FullNameTimeslot, Telephone
     """
-    # Note: The check for market type is kept for backward compatibility,
-    # but currently all market types use the same parsing logic
     df = pd.read_csv(
         file_obj,
         index_col=False,
@@ -127,25 +121,16 @@ def load_timeslots(file_obj: BinaryIO, market_type: str) -> pd.DataFrame:
     return df
 
 
-def load_packing_categories(market_type: str, template_dir: Path) -> pd.DataFrame:
-    """Load packing categories from market-specific template file.
-
-    The template file is copied from templates/ directory as it may be modified.
+def load_packing_categories(template_path: Path) -> pd.DataFrame:
+    """Load packing categories (placeringsnycklar_<market>.xlsx).
 
     Args:
-        market_type: One of config.MARKET_TYPES
-        template_dir: Path to templates directory
+        template_path: Path to the market's packing categories file
 
     Returns:
         DataFrame with columns: PickUpArea, PackingCategory, PackingCategoryKey,
                                 PackingCategoryIndex
     """
-    template_path = config.get_template_path(
-        template_dir,
-        config.TEMPLATE_FILENAME_PACKING_CATEGORIES,
-        market_type
-    )
-
     df = pd.read_excel(
         str(template_path),
         header=1,
@@ -173,22 +158,15 @@ def load_packing_categories(market_type: str, template_dir: Path) -> pd.DataFram
     return df[['PickUpArea', 'PackingCategory', 'PackingCategoryKey', 'PackingCategoryIndex']]
 
 
-def load_schedule(market_type: str, template_dir: Path) -> pd.DataFrame:
-    """Load pickup schedule from market-specific template file.
+def load_schedule(template_path: Path) -> pd.DataFrame:
+    """Load pickup schedule (schedule_<market>.xlsx).
 
     Args:
-        market_type: One of config.MARKET_TYPES
-        template_dir: Path to templates directory
+        template_path: Path to the market's schedule file
 
     Returns:
         DataFrame with columns: Dag, Tid, Date, DateTime
     """
-    template_path = config.get_template_path(
-        template_dir,
-        config.TEMPLATE_FILENAME_SCHEDULE,
-        market_type
-    )
-
     df = pd.read_excel(str(template_path))
 
     # Create additional date and datetime columns

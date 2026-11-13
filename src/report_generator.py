@@ -62,8 +62,7 @@ def _pickup_slots(scheduled_times, booked_times):
 
 def generate_packlista(
     all_data_df: pd.DataFrame,
-    template_dir: Path,
-    market_type: str
+    template_path: Path
 ) -> bytes:
     """Generate packing lists (one sheet per order).
 
@@ -71,21 +70,12 @@ def generate_packlista(
 
     Args:
         all_data_df: Merged and sorted DataFrame
-        template_dir: Path to templates directory
-        market_type: One of config.MARKET_TYPES
+        template_path: The market's packlista template (MarketProfile.packlista_template)
 
     Returns:
         bytes: The .xlsx file content
     """
-    # Load template (the output is built in memory)
-    template_path = config.get_template_path(
-        template_dir,
-        config.TEMPLATE_FILENAME_PACKLISTA,
-        market_type
-    )
-
-
-    # Load workbook and template sheet
+    # Load workbook and template sheet (the output is built in memory)
     workbook = load_workbook(filename=template_path)
     template_sheet = workbook['template']
 

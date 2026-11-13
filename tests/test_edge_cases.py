@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from src import config
+from src.markets import MARKETS, PASK
 from src.data_loader import load_packing_categories
 from src.data_validator import remove_duplicate_bookings
 from src.excel_utils import set_cell_value
@@ -57,7 +58,7 @@ def broken_data(pask_data):
 
 def test_packlista_keeps_every_order(broken_data, templates_dir):
     df, cases = broken_data
-    wb = _workbook(generate_packlista(df, templates_dir, config.MARKET_TYPE_PASK))
+    wb = _workbook(generate_packlista(df, PASK.packlista_template(templates_dir)))
 
     assert set(wb.sheetnames) == {f'PO_{o}' for o in df['OrderNumber'].unique()}
 
@@ -112,7 +113,7 @@ class TestFormulaInjection:
     def test_template_reports(self, broken_data, pask_data, templates_dir):
         df, _ = broken_data
         for data in (
-            generate_packlista(df, templates_dir, config.MARKET_TYPE_PASK),
+            generate_packlista(df, PASK.packlista_template(templates_dir)),
             generate_hamtningslista(df, pask_data.schedule, templates_dir),
         ):
             wb = _workbook(data)
@@ -137,8 +138,8 @@ class TestFormulaInjection:
 
 
 def test_packing_templates_have_no_blank_or_duplicate_keys(templates_dir):
-    for market in config.MARKET_TYPES:
-        df = load_packing_categories(market, templates_dir)
+    for market in MARKETS.values():
+        df = load_packing_categories(market.packing_categories(templates_dir))
         assert 'nan' not in set(df['PackingCategoryKey']), market
         assert not df['PackingCategoryKey'].duplicated().any(), market
         assert df['PackingCategoryIndex'].is_monotonic_increasing, market

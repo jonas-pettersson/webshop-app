@@ -68,7 +68,7 @@ class TestLoadTimeslots:
     def test_load_timeslots_pask(self, pask_timeslots_file):
         """Test loading timeslots from pask booking export."""
         with open(pask_timeslots_file, 'rb') as f:
-            df = load_timeslots(f, market_type=config.MARKET_TYPE_PASK)
+            df = load_timeslots(f)
 
         # Check expected columns
         expected_cols = [
@@ -92,10 +92,7 @@ class TestLoadPackingCategories:
 
     def test_load_packing_categories_pask(self, pask_packing_categories_file, pask_fixtures_dir):
         """Test loading packing categories from template."""
-        df = load_packing_categories(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
+        df = load_packing_categories(pask_packing_categories_file)
 
         # Check expected columns
         expected_cols = [
@@ -119,10 +116,7 @@ class TestLoadSchedule:
 
     def test_load_schedule_pask(self, pask_schedule_file, pask_fixtures_dir):
         """Test loading schedule from template."""
-        df = load_schedule(
-            market_type=config.MARKET_TYPE_PASK,
-            template_dir=pask_fixtures_dir
-        )
+        df = load_schedule(pask_schedule_file)
 
         # Check expected columns
         expected_cols = ['Dag', 'Tid', 'Date', 'DateTime']

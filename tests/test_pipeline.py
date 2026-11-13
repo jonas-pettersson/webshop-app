@@ -6,6 +6,7 @@ import zipfile
 import pytest
 
 from src import config
+from src.markets import MARKETS, PASK
 from src.pipeline import (
     OrderInputs,
     build_diffs_report,
@@ -21,7 +22,7 @@ from src.pipeline import (
 @pytest.fixture(scope='module')
 def pask_inputs(pask_data):
     return OrderInputs(
-        market_type=config.MARKET_TYPE_PASK, products=pask_data.products,
+        market=PASK, products=pask_data.products,
         orders=pask_data.orders, timeslots=pask_data.timeslots,
         packing=pask_data.packing, schedule=pask_data.schedule,
     )
@@ -31,8 +32,8 @@ def test_load_order_inputs_from_uploads(pask_fixtures_dir, templates_dir):
     with open(pask_fixtures_dir / 'wc-product-export.csv', 'rb') as p, \
          open(pask_fixtures_dir / 'orders.xlsx', 'rb') as o, \
          open(pask_fixtures_dir / 'tidsbokning.csv', 'rb') as t:
-        inputs = load_order_inputs(p, o, t, config.MARKET_TYPE_PASK, templates_dir)
-    assert inputs.market_type == config.MARKET_TYPE_PASK
+        inputs = load_order_inputs(p, o, t, PASK, templates_dir)
+    assert inputs.market is PASK
     assert len(inputs.orders) > 0 and len(inputs.schedule) > 0
 
 
@@ -52,11 +53,18 @@ def test_build_order_reports_pask(pask_inputs, templates_dir):
     assert progress == sorted(progress) and progress[-1] == 100
 
 
-def test_semlelista_only_for_pask(pask_inputs, templates_dir):
+def test_semlelista_only_when_semla_ordered(pask_inputs, templates_dir):
     from dataclasses import replace
-    reports = build_order_reports(replace(pask_inputs, market_type=config.MARKET_TYPE_JULMARKNAD),
-                                  templates_dir)
-    assert config.OUTPUT_FILENAME_SEMLELISTA not in reports
+    orders = pask_inputs.orders
+    no_semla = replace(pask_inputs,
+                       orders=orders[orders['ArticleNumber'] != config.ARTICLE_NUMBER_SEMLA])
+    assert config.OUTPUT_FILENAME_SEMLELISTA not in build_order_reports(no_semla, templates_dir)
+
+
+def test_every_market_has_its_templates(templates_dir):
+    for market in MARKETS.values():
+        for path in market.template_files(templates_dir):
+            assert path.exists(), f"{market.key}: missing {path.name}"
 
 
 def test_runs_are_isolated(pask_inputs, templates_dir):

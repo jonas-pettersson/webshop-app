@@ -38,7 +38,7 @@ def test_correct_password_renders_main_ui(app):
     assert not app.exception
     assert app.title[0].value.startswith('📊 WebShop Report Generator')
     assert len(app.tabs) == 2
-    assert app.selectbox[0].options == ['julmarknad', 'julmaten', 'pask']
+    assert app.selectbox[0].options == ['Julmarknad', 'Julmaten', 'Påskmarknad']
 
 
 def test_non_ascii_password_does_not_crash(app):

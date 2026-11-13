@@ -49,13 +49,13 @@ def pask_products_report_file(pask_fixtures_dir):
 @pytest.fixture
 def pask_packing_categories_file(pask_fixtures_dir):
     """Return path to pask packing categories template."""
-    return pask_fixtures_dir / 'placeringsnycklar.xlsx'
+    return pask_fixtures_dir / 'placeringsnycklar_pask.xlsx'
 
 
 @pytest.fixture
 def pask_schedule_file(pask_fixtures_dir):
     """Return path to pask schedule template."""
-    return pask_fixtures_dir / 'schedule.xlsx'
+    return pask_fixtures_dir / 'schedule_pask.xlsx'
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ def pask_schedule_file(pask_fixtures_dir):
 
 from types import SimpleNamespace
 
-from src import config
+from src.markets import PASK
 from src.data_loader import (
     load_products,
     load_orders,
@@ -96,9 +96,9 @@ def pask_data():
     with open(_FIXTURES_PASK / 'orders.xlsx', 'rb') as f:
         orders = load_orders(f)
     with open(_FIXTURES_PASK / 'tidsbokning.csv', 'rb') as f:
-        timeslots = load_timeslots(f, config.MARKET_TYPE_PASK)
-    packing = load_packing_categories(config.MARKET_TYPE_PASK, _FIXTURES_PASK)
-    schedule = load_schedule(config.MARKET_TYPE_PASK, _FIXTURES_PASK)
+        timeslots = load_timeslots(f)
+    packing = load_packing_categories(PASK.packing_categories(_FIXTURES_PASK))
+    schedule = load_schedule(PASK.schedule(_FIXTURES_PASK))
 
     all_data = sort_for_reports(merge_all_data(
         orders, remove_duplicate_bookings(timeslots), products, packing

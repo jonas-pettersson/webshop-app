@@ -33,6 +33,7 @@ from .data_validator import (
 )
 from .excel_utils import dataframe_to_xlsx_bytes
 from .lagerrapport_processor import prepare_lagerrapport_data
+from .markets import MarketProfile
 from .report_generator import (
     generate_hamtningslista,
     generate_lagerrapport,
@@ -48,7 +49,7 @@ ProgressCallback = Callable[[int, str], None]
 @dataclass
 class OrderInputs:
     """All datasets needed for the order reports of one market."""
-    market_type: str
+    market: MarketProfile
     products: pd.DataFrame
     orders: pd.DataFrame
     timeslots: pd.DataFrame
@@ -57,15 +58,15 @@ class OrderInputs:
 
 
 def load_order_inputs(products_file, orders_file, timeslots_file,
-                      market_type: str, template_dir: Path) -> OrderInputs:
+                      market: MarketProfile, template_dir: Path) -> OrderInputs:
     """Load the three uploads plus the market's packing/schedule templates."""
     return OrderInputs(
-        market_type=market_type,
+        market=market,
         products=load_products(products_file),
         orders=load_orders(orders_file),
-        timeslots=load_timeslots(timeslots_file, market_type),
-        packing=load_packing_categories(market_type, template_dir),
-        schedule=load_schedule(market_type, template_dir),
+        timeslots=load_timeslots(timeslots_file),
+        packing=load_packing_categories(market.packing_categories(template_dir)),
+        schedule=load_schedule(market.schedule(template_dir)),
     )
 
 
@@ -106,13 +107,14 @@ def build_order_reports(inputs: OrderInputs, template_dir: Path,
 
     step(25, "Generating packing lists...")
     reports[config.OUTPUT_FILENAME_PACKLISTA] = generate_packlista(
-        all_data, template_dir, inputs.market_type)
+        all_data, inputs.market.packlista_template(template_dir))
 
     step(50, "Generating pickup lists...")
     reports[config.OUTPUT_FILENAME_HAMTNINGSLISTA] = generate_hamtningslista(
         all_data, inputs.schedule, template_dir)
 
-    if inputs.market_type == config.MARKET_TYPE_PASK:
+    # Semla is sold at påsk; the list is made whenever semla was ordered
+    if (all_data['ArticleNumber'] == config.ARTICLE_NUMBER_SEMLA).any():
         step(70, "Generating semla list...")
         reports[config.OUTPUT_FILENAME_SEMLELISTA] = generate_semlelista(all_data, template_dir)
 
