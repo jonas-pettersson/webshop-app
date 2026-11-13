@@ -32,24 +32,23 @@ def frozen_clock(monkeypatch):
     monkeypatch.setattr(report_generator, 'datetime', _FrozenDatetime)
 
 
-def _build(name, out, data, inventory, templates_dir):
+def _build(name, data, inventory, templates_dir) -> bytes:
     if name == 'packlista':
-        report_generator.generate_packlista(
-            data.all_data, templates_dir, out, config.MARKET_TYPE_PASK)
-    elif name == 'hamtningslista':
-        report_generator.generate_hamtningslista(
-            data.all_data, data.schedule, templates_dir, out)
-    elif name == 'semlelista':
-        report_generator.generate_semlelista(data.all_data, templates_dir, out)
-    elif name == 'masterlista':
-        report_generator.generate_masterlista(data.all_data, out)
-    elif name == 'diffs':
-        result = validate_data(data.orders, data.timeslots, data.products, data.packing)
-        generate_diffs_report(result, out)
-    elif name == 'lagerrapport':
-        report_generator.generate_lagerrapport(inventory.inventory, templates_dir, out)
-    else:
-        raise ValueError(name)
+        return report_generator.generate_packlista(
+            data.all_data, templates_dir, config.MARKET_TYPE_PASK)
+    if name == 'hamtningslista':
+        return report_generator.generate_hamtningslista(
+            data.all_data, data.schedule, templates_dir)
+    if name == 'semlelista':
+        return report_generator.generate_semlelista(data.all_data, templates_dir)
+    if name == 'masterlista':
+        return report_generator.generate_masterlista(data.all_data)
+    if name == 'diffs':
+        return generate_diffs_report(validate_data(
+            data.orders, data.timeslots, data.products, data.packing, data.schedule))
+    if name == 'lagerrapport':
+        return report_generator.generate_lagerrapport(inventory.inventory, templates_dir)
+    raise ValueError(name)
 
 
 @pytest.mark.parametrize('name', [
@@ -58,7 +57,7 @@ def _build(name, out, data, inventory, templates_dir):
 def test_report_matches_golden(name, pask_data, pask_inventory, templates_dir,
                                tmp_path, frozen_clock):
     out = tmp_path / f'{name}.xlsx'
-    _build(name, out, pask_data, pask_inventory, templates_dir)
+    out.write_bytes(_build(name, pask_data, pask_inventory, templates_dir))
     actual = snapshot_workbook(out)
 
     if UPDATE:

@@ -24,8 +24,10 @@ webshop-app/
 │   ├── excel_utils.py         # Excel template manipulation (142 lines)
 │   ├── data_loader.py         # CSV/Excel import (178 lines)
 │   ├── data_validator.py      # Data validation (213 lines)
-│   ├── data_processor.py      # Data merging (40 lines)
-│   └── report_generator.py    # Excel report generation (379 lines)
+│   ├── data_processor.py      # Data merging
+│   ├── report_generator.py    # Excel report generation (returns xlsx bytes)
+│   ├── lagerrapport_processor.py  # Inventory report data
+│   └── pipeline.py            # End-to-end pipelines used by app.py (UI-independent)
 ├── templates/                  # 12 Excel templates (market-specific)
 ├── .streamlit/
 │   ├── config.toml            # Streamlit settings
@@ -97,12 +99,16 @@ The app will open at http://localhost:8501
 
 ## Generated Reports
 
-1. **diffs.xlsx** - Data validation (5 sheets):
-   - Orders without timeslots
+1. **diffs.xlsx** - Data validation (10 sheets, all warnings - generation is never blocked):
+   - Orders without timeslots (incl. orders without email)
    - Timeslots without orders
+   - Incomplete timeslots (missing email, date or time)
    - Duplicate bookings
    - Missing products
    - Missing packing categories
+   - Bookings outside the pickup schedule
+   - Duplicate products (SKU) / duplicate packing categories
+   - "Saknas i packlistor": every order line excluded from the reports, with reason
 
 2. **packlista.xlsx** - Packing lists:
    - One sheet per order
@@ -181,7 +187,20 @@ See `DEPLOYMENT.md` for detailed instructions.
 
 ## Known Issues
 
-1. **Date sorting with missing data** - Both this app and the original notebook have an issue where validation sorting fails if dates are missing/NaN. Decision: Wait for real julmarknad data to determine if this is a data entry error (should be reported) or expected edge case (should be handled).
+None currently. (Missing pickup dates/times used to drop orders or crash the semlelista;
+since Nov 2026 they are reported as incomplete timeslots and the orders still appear in
+the reports - see `tests/test_edge_cases.py`.)
+
+## Design Rules
+
+- **Validation warns, never blocks.** Every data problem is shown in the UI and in
+  diffs.xlsx, and reports are still generated. Affected orders stay in the reports
+  (bookings outside the schedule are listed as "HH:MM (ej i schema)", bookings without
+  time under "Ingen tid") instead of disappearing.
+- **No shared files.** Reports are built in memory per browser session
+  (`st.session_state`); Streamlit Cloud serves all users from one process.
+- **User text is never a formula.** Write cells via `excel_utils.set_cell_value()` /
+  `dataframe_to_xlsx_bytes()`, which keep strings starting with `=` as plain text.
 
 ## Testing
 

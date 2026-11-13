@@ -1,43 +1,44 @@
 """WebShop Report Generator - Streamlit Web Application
 
 Web interface for generating reports from Svenska Kyrkan i Wien webshop orders.
+
+All results live in st.session_state (per browser session) and are built
+in memory - nothing is written to a shared directory on the server.
 """
 
 import hmac
-import io
-import shutil
-import zipfile
+import traceback
 from pathlib import Path
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 from src import config
-from src.data_loader import (
-    load_products,
-    load_orders,
-    load_timeslots,
-    load_packing_categories,
-    load_schedule,
-    load_product_export,
-    load_products_report_export,
-    load_sku_mapping
+from src.data_validator import CHECKS
+from src.pipeline import (
+    build_diffs_report,
+    build_lagerrapport,
+    build_order_reports,
+    load_order_inputs,
+    prepare_inventory,
+    validate_order_inputs,
+    zip_reports,
 )
-from src.data_validator import (
-    validate_data,
-    generate_diffs_report,
-    remove_duplicate_bookings,
-    validate_inventory_data
-)
-from src.data_processor import merge_all_data, sort_for_reports
-from src.report_generator import (
-    generate_packlista,
-    generate_hamtningslista,
-    generate_semlelista,
-    generate_masterlista,
-    generate_lagerrapport
-)
-from src.lagerrapport_processor import prepare_lagerrapport_data
+
+TEMPLATE_DIR = Path(__file__).parent / 'templates'
+XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+# Download labels for generated order reports (in display order)
+REPORT_LABELS = {
+    config.OUTPUT_FILENAME_PACKLISTA: "📥 Packlista (Packing Lists)",
+    config.OUTPUT_FILENAME_HAMTNINGSLISTA: "📥 Hämtningslista (Pickup Lists)",
+    config.OUTPUT_FILENAME_SEMLELISTA: "📥 Semlelista (Semla List)",
+    config.OUTPUT_FILENAME_MASTERLISTA: "📥 Masterlista (Master List)",
+}
+
+# Session state owned by each workflow; cleared when its inputs change
+ORDER_STATE_KEYS = ['order_inputs', 'validation_result', 'diffs', 'reports']
+INVENTORY_STATE_KEYS = ['inventory_result', 'lagerrapport']
 
 
 # Page configuration
@@ -50,10 +51,16 @@ st.set_page_config(
 
 def check_password():
     """Returns True if the user had the correct password."""
+    expected = st.secrets.get("password")
+    if not expected:
+        st.error("Password is not configured. Set `password` in the app secrets.")
+        st.stop()
 
     def password_entered():
         """Checks whether a password entered by the user is correct."""
-        if hmac.compare_digest(st.session_state["password"], st.secrets["password"]):
+        # Compare bytes: compare_digest rejects non-ASCII str (e.g. 'å')
+        entered = st.session_state["password"].encode('utf-8')
+        if hmac.compare_digest(entered, str(expected).encode('utf-8')):
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
@@ -77,16 +84,356 @@ def check_password():
     return False
 
 
-def init_session_state():
-    """Initialize session state variables."""
-    if 'market_type' not in st.session_state:
-        st.session_state.market_type = config.MARKET_TYPE_JULMARKNAD
-    if 'uploaded_files' not in st.session_state:
-        st.session_state.uploaded_files = {}
+def reset_if_inputs_changed(fingerprint_key: str, fingerprint: tuple, state_keys: list):
+    """Clear a workflow's results when its inputs (market, uploads) change.
+
+    Prevents generating reports from data validated for another market or
+    from previously uploaded files.
+    """
+    if st.session_state.get(fingerprint_key) != fingerprint:
+        for key in state_keys:
+            st.session_state.pop(key, None)
+        st.session_state[fingerprint_key] = fingerprint
+
+
+def upload_id(uploaded_file):
+    """Identity of an upload; changes when a (new) file is uploaded."""
+    if uploaded_file is None:
+        return None
+    return getattr(uploaded_file, 'file_id', None) or (uploaded_file.name, uploaded_file.size)
+
+
+def show_error(message: str, error: Exception):
+    st.error(f"❌ {message}: {error}")
+    with st.expander("Technical details"):
+        st.code(traceback.format_exc())
+
+
+def show_validation_results(validation_result):
+    summary = validation_result.get_summary()
+
+    st.subheader("Validation Results")
+
+    # One metric per check
+    for col, (attr, label) in zip(st.columns(len(CHECKS)), CHECKS):
+        with col:
+            st.metric(label, summary[attr] if summary[attr] > 0 else "✓")
+
+    # Headline: what will be missing from the packing/pickup lists
+    excluded = validation_result.excluded_order_lines
+    if len(excluded) > 0:
+        st.warning(
+            f"⚠️ **{len(excluded)} order lines from {excluded['OrderNumber'].nunique()} "
+            f"orders will not appear in packing and pickup lists.** "
+            f"See details below or sheet 'Saknas i packlistor' in diffs.xlsx."
+        )
+        with st.expander(f"⚠️ View {len(excluded)} Order Lines Missing From Reports"):
+            st.dataframe(excluded, width='stretch')
+
+    # Wrong market selected? Most bookings won't match the schedule then.
+    outside = summary['bookings_outside_schedule']
+    if outside > 0 and outside >= 0.5 * len(st.session_state.order_inputs.timeslots):
+        st.warning(
+            f"⚠️ {outside} bookings are not in the **{st.session_state.market_type}** "
+            f"pickup schedule. Did you select the right market type?"
+        )
+
+    # Details per check
+    for attr, label in CHECKS:
+        count = summary[attr]
+        if count == 0:
+            continue
+        with st.expander(f"⚠️ View {count} {label}"):
+            df = getattr(validation_result, attr)
+            if attr == 'incomplete_timeslots':
+                parts = [f"{df[col].isna().sum()} with missing {name}"
+                         for col, name in [('Email', 'email'), ('PickUpDate', 'pickup date'),
+                                           ('PickUpTime', 'pickup time')]
+                         if df[col].isna().any()]
+                st.info(f"ℹ️ Data quality issues: {', '.join(parts)}")
+            if attr == 'bookings_outside_schedule':
+                st.info("ℹ️ These bookings are added to the pickup list marked '(ej i schema)'.")
+            st.dataframe(df, width='stretch')
+
+    st.download_button(
+        label="📥 Download Full Validation Report (diffs.xlsx)",
+        data=st.session_state.diffs[config.OUTPUT_FILENAME_DIFFS],
+        file_name=config.OUTPUT_FILENAME_DIFFS,
+        mime=XLSX_MIME
+    )
+
+
+def order_reports_tab():
+    # Step 1: Configuration
+    st.header("1️⃣ Configuration")
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        market_type = st.selectbox(
+            "Market Type",
+            options=config.MARKET_TYPES,
+            index=config.MARKET_TYPES.index(st.session_state.market_type),
+            help="Select the type of market event"
+        )
+        st.session_state.market_type = market_type
+
+    with col2:
+        st.info(f"**Selected:** {market_type.capitalize()}")
+
+    st.divider()
+
+    # Step 2: File Upload
+    st.header("2️⃣ Upload Files")
+
+    st.markdown("Upload the exported files from WordPress:")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        products_file = st.file_uploader(
+            "Products (CSV)",
+            type=['csv'],
+            key='products',
+            help="wc-product-export.csv from WordPress"
+        )
+
+    with col2:
+        orders_file = st.file_uploader(
+            "Orders (Excel)",
+            type=['xlsx'],
+            key='orders',
+            help="orders.xlsx from WooCommerce"
+        )
+
+    with col3:
+        timeslots_file = st.file_uploader(
+            "Time Slots (CSV)",
+            type=['csv'],
+            key='timeslots',
+            help="tidsbokning.csv from WP Time Slots"
+        )
+
+    st.info("ℹ️ Packing categories and schedule are loaded automatically from templates")
+
+    reset_if_inputs_changed(
+        'order_fingerprint',
+        (market_type, upload_id(products_file), upload_id(orders_file), upload_id(timeslots_file)),
+        ORDER_STATE_KEYS,
+    )
+
+    st.divider()
+
+    if not (products_file and orders_file and timeslots_file):
+        st.info("👆 Please upload all three required files to continue")
+        return
+
+    # Step 3: Validation and Processing
+    st.header("3️⃣ Validation & Processing")
+
+    if st.button("▶️ Run Validation", type="primary", width='stretch'):
+        for key in ORDER_STATE_KEYS:
+            st.session_state.pop(key, None)
+
+        with st.spinner("Loading data..."):
+            try:
+                st.session_state.order_inputs = load_order_inputs(
+                    products_file, orders_file, timeslots_file, market_type, TEMPLATE_DIR
+                )
+                st.success("✅ Data loaded successfully!")
+            except Exception as e:
+                show_error("Error loading data", e)
+                st.stop()
+
+        with st.spinner("Running validation..."):
+            try:
+                result = validate_order_inputs(st.session_state.order_inputs)
+                st.session_state.diffs = build_diffs_report(result)
+                st.session_state.validation_result = result
+                st.success("✅ Validation complete!")
+            except Exception as e:
+                show_error("Error during validation", e)
+                st.stop()
+
     if 'validation_result' not in st.session_state:
-        st.session_state.validation_result = None
-    if 'reports_generated' not in st.session_state:
-        st.session_state.reports_generated = False
+        return
+
+    validation_result = st.session_state.validation_result
+    show_validation_results(validation_result)
+
+    st.divider()
+
+    # Step 4: Generate Reports
+    st.header("4️⃣ Generate Reports")
+
+    if validation_result.has_errors():
+        st.warning("⚠️ Validation issues detected. Review them before proceeding, or continue anyway.")
+
+    if st.button("🚀 Generate All Reports", type="primary", width='stretch'):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        def progress(percent, message):
+            progress_bar.progress(percent)
+            status_text.text(message)
+
+        try:
+            st.session_state.reports = build_order_reports(
+                st.session_state.order_inputs, TEMPLATE_DIR, progress
+            )
+            st.success("🎉 All reports generated successfully!")
+        except Exception as e:
+            show_error("Error generating reports", e)
+            st.stop()
+
+    # Step 5: Download
+    reports = st.session_state.get('reports')
+    if not reports:
+        return
+
+    st.divider()
+    st.header("5️⃣ Download Reports")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Individual Reports")
+        for filename, label in REPORT_LABELS.items():
+            if filename in reports:
+                st.download_button(label=label, data=reports[filename],
+                                   file_name=filename, mime=XLSX_MIME)
+
+    with col2:
+        st.subheader("Download All")
+        st.download_button(
+            label="📦 Download All Reports (ZIP)",
+            data=zip_reports({**st.session_state.diffs, **reports}),
+            file_name=f'webshop_reports_{st.session_state.order_inputs.market_type}.zip',
+            mime='application/zip',
+            type="primary"
+        )
+
+
+def inventory_tab():
+    st.header("📊 Inventory Report (Lagerrapport)")
+    st.markdown("Generate inventory analysis by combining product catalog with sales data.")
+
+    st.divider()
+
+    # Step 1: File Upload
+    st.header("1️⃣ Upload Files")
+
+    st.markdown("Upload the exported files from WordPress:")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        product_export_file = st.file_uploader(
+            "Product Export (CSV)",
+            type=['csv'],
+            key='inventory_product_export',
+            help="wc-product-export.csv - Full product catalog"
+        )
+
+    with col2:
+        products_report_file = st.file_uploader(
+            "Products Report (CSV)",
+            type=['csv'],
+            key='inventory_products_report',
+            help="wc-products-report-export.csv - Sales report"
+        )
+
+    reset_if_inputs_changed(
+        'inventory_fingerprint',
+        (upload_id(product_export_file), upload_id(products_report_file)),
+        INVENTORY_STATE_KEYS,
+    )
+
+    st.divider()
+
+    if not (product_export_file and products_report_file):
+        st.info("👆 Please upload both required files to continue")
+        return
+
+    # Step 2: Load and Validate
+    st.header("2️⃣ Validation & Processing")
+
+    if st.button("▶️ Load and Validate Data", type="primary", width='stretch', key='validate_inventory'):
+        for key in INVENTORY_STATE_KEYS:
+            st.session_state.pop(key, None)
+
+        with st.spinner("Loading inventory data..."):
+            try:
+                st.session_state.inventory_result = prepare_inventory(
+                    product_export_file, products_report_file, TEMPLATE_DIR
+                )
+                n = len(st.session_state.inventory_result.inventory)
+                st.success(f"✅ Data loaded successfully! {n} products with sales activity")
+            except Exception as e:
+                show_error("Error loading data", e)
+
+    inventory_result = st.session_state.get('inventory_result')
+    if inventory_result is None:
+        return
+
+    st.divider()
+    validation = inventory_result.validation
+
+    if validation['warnings']:
+        st.warning("⚠️ Validation Warnings")
+        for warning in validation['warnings']:
+            st.write(warning)
+
+        if validation['sku_mismatches']:
+            with st.expander(f"SKU Mismatches ({len(validation['sku_mismatches'])})"):
+                st.write("SKUs in sales report but not in product export:")
+                st.dataframe(pd.DataFrame({'SKU': validation['sku_mismatches']}))
+
+        if len(validation['unmapped_skus']) > 0:
+            with st.expander(f"Unmapped SKUs ({len(validation['unmapped_skus'])})"):
+                st.write("Products with unknown sales area:")
+                st.dataframe(validation['unmapped_skus'][['SKU', 'Product title', 'Category (SKUT)']])
+
+        if len(validation['missing_prices']) > 0:
+            with st.expander(f"Missing Prices ({len(validation['missing_prices'])})"):
+                st.write("Products with missing price data:")
+                st.dataframe(validation['missing_prices'][['SKU', 'Product title', 'Regular price']])
+
+        if len(validation['missing_stock']) > 0:
+            with st.expander(f"Missing Stock ({len(validation['missing_stock'])})"):
+                st.write("Products with missing stock data:")
+                st.dataframe(validation['missing_stock'][['SKU', 'Product title', 'Stock']])
+    else:
+        st.success("✅ All validation checks passed!")
+
+    st.divider()
+
+    # Step 3: Generate Report
+    st.header("3️⃣ Generate Report")
+
+    if st.button("▶️ Generate Lagerrapport", type="primary", width='stretch', key='generate_inventory'):
+        with st.spinner("Generating lagerrapport..."):
+            try:
+                st.session_state.lagerrapport = build_lagerrapport(
+                    inventory_result.inventory, TEMPLATE_DIR
+                )
+                st.success("✅ Lagerrapport generated successfully!")
+            except Exception as e:
+                show_error("Error generating report", e)
+
+    # Step 4: Download
+    lagerrapport = st.session_state.get('lagerrapport')
+    if lagerrapport:
+        st.divider()
+        st.header("4️⃣ Download Report")
+        st.download_button(
+            label="📥 Download Lagerrapport",
+            data=lagerrapport[config.OUTPUT_FILENAME_LAGERRAPPORT],
+            file_name=config.OUTPUT_FILENAME_LAGERRAPPORT,
+            mime=XLSX_MIME,
+            type="primary",
+            width='stretch'
+        )
 
 
 def main():
@@ -96,8 +443,8 @@ def main():
     if not check_password():
         st.stop()
 
-    # Initialize session state
-    init_session_state()
+    if 'market_type' not in st.session_state:
+        st.session_state.market_type = config.MARKET_TYPE_JULMARKNAD
 
     # Header
     st.title("📊 WebShop Report Generator")
@@ -109,517 +456,10 @@ def main():
     tabs = st.tabs(["📦 Order Reports", "📊 Inventory Report"])
 
     with tabs[0]:
-        # ===== ORDER REPORTS WORKFLOW =====
-
-        # Step 1: Configuration
-        st.header("1️⃣ Configuration")
-
-        col1, col2 = st.columns([1, 2])
-
-        with col1:
-            market_type = st.selectbox(
-                "Market Type",
-                options=config.MARKET_TYPES,
-                index=config.MARKET_TYPES.index(st.session_state.market_type),
-                help="Select the type of market event"
-            )
-            st.session_state.market_type = market_type
-
-        with col2:
-            st.info(f"**Selected:** {market_type.capitalize()}")
-
-        st.divider()
-
-        # Step 2: File Upload
-        st.header("2️⃣ Upload Files")
-
-        st.markdown("Upload the exported files from WordPress:")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            products_file = st.file_uploader(
-                "Products (CSV)",
-                type=['csv'],
-                key='products',
-                help="wc-product-export.csv from WordPress"
-            )
-
-        with col2:
-            orders_file = st.file_uploader(
-                "Orders (Excel)",
-                type=['xlsx'],
-                key='orders',
-                help="orders.xlsx from WooCommerce"
-            )
-
-        with col3:
-            timeslots_file = st.file_uploader(
-                "Time Slots (CSV)",
-                type=['csv'],
-                key='timeslots',
-                help="tidsbokning.csv from WP Time Slots"
-            )
-
-        st.info("ℹ️ Packing categories and schedule are loaded automatically from templates")
-
-        # Check if all files are uploaded
-        all_files_uploaded = (
-            products_file is not None and
-            orders_file is not None and
-            timeslots_file is not None
-        )
-
-        st.divider()
-
-        # Step 3: Validation and Processing
-        if all_files_uploaded:
-            st.header("3️⃣ Validation & Processing")
-
-            if st.button("▶️ Run Validation", type="primary", width='stretch'):
-                with st.spinner("Loading data..."):
-                    try:
-                        # Load uploaded files
-                        df_products = load_products(products_file)
-                        df_orders = load_orders(orders_file)
-                        df_timeslots = load_timeslots(timeslots_file, market_type)
-
-                        # Load templates
-                        template_dir = Path('templates')
-                        df_packing = load_packing_categories(market_type, template_dir)
-                        df_schedule = load_schedule(market_type, template_dir)
-
-                        # Store in session state
-                        st.session_state.df_products = df_products
-                        st.session_state.df_orders = df_orders
-                        st.session_state.df_timeslots = df_timeslots
-                        st.session_state.df_packing = df_packing
-                        st.session_state.df_schedule = df_schedule
-
-                        st.success("✅ Data loaded successfully!")
-
-                    except Exception as e:
-                        st.error(f"❌ Error loading data: {str(e)}")
-                        st.stop()
-
-                with st.spinner("Running validation..."):
-                    try:
-                        # Run validation
-                        validation_result = validate_data(
-                            st.session_state.df_orders,
-                            st.session_state.df_timeslots,
-                            st.session_state.df_products,
-                            st.session_state.df_packing
-                        )
-
-                        st.session_state.validation_result = validation_result
-
-                        # Generate diffs report
-                        outputs_dir = Path('outputs')
-                        outputs_dir.mkdir(exist_ok=True)
-
-                        diffs_path = outputs_dir / config.OUTPUT_FILENAME_DIFFS
-                        generate_diffs_report(validation_result, diffs_path)
-
-                        st.success("✅ Validation complete!")
-
-                    except Exception as e:
-                        st.error(f"❌ Error during validation: {str(e)}")
-                        st.stop()
-
-            # Display validation results if available
-            if st.session_state.validation_result is not None:
-                validation_result = st.session_state.validation_result
-                summary = validation_result.get_summary()
-
-                st.subheader("Validation Results")
-
-                # Create columns for each validation type
-                col1, col2, col3, col4, col5, col6 = st.columns(6)
-
-                with col1:
-                    if summary['orders_no_timeslot'] > 0:
-                        st.metric("Orders w/o Timeslot", summary['orders_no_timeslot'], delta=None, delta_color="off")
-                    else:
-                        st.metric("Orders w/o Timeslot", "✓", delta=None)
-    
-                with col2:
-                    if summary['timeslots_no_order'] > 0:
-                        st.metric("Timeslots w/o Order", summary['timeslots_no_order'], delta=None, delta_color="off")
-                    else:
-                        st.metric("Timeslots w/o Order", "✓", delta=None)
-
-                with col3:
-                    if summary['incomplete_timeslots'] > 0:
-                        st.metric("Incomplete Timeslots", summary['incomplete_timeslots'], delta=None, delta_color="off")
-                    else:
-                        st.metric("Incomplete Timeslots", "✓", delta=None)
-
-                with col4:
-                    if summary['duplicate_bookings'] > 0:
-                        st.metric("Duplicate Bookings", summary['duplicate_bookings'], delta=None, delta_color="off")
-                    else:
-                        st.metric("Duplicate Bookings", "✓", delta=None)
-
-                with col5:
-                    if summary['missing_products'] > 0:
-                        st.metric("Missing Products", summary['missing_products'], delta=None, delta_color="off")
-                    else:
-                        st.metric("Missing Products", "✓", delta=None)
-
-                with col6:
-                    if summary['missing_categories'] > 0:
-                        st.metric("Missing Categories", summary['missing_categories'], delta=None, delta_color="off")
-                    else:
-                        st.metric("Missing Categories", "✓", delta=None)
-    
-                # Show details in expanders
-                if summary['orders_no_timeslot'] > 0:
-                    with st.expander(f"⚠️ View {summary['orders_no_timeslot']} Orders Without Timeslot"):
-                        st.dataframe(validation_result.orders_no_timeslot, width='stretch')
-
-                if summary['timeslots_no_order'] > 0:
-                    with st.expander(f"⚠️ View {summary['timeslots_no_order']} Timeslots Without Order"):
-                        st.dataframe(validation_result.timeslots_no_order, width='stretch')
-
-                if summary['incomplete_timeslots'] > 0:
-                    with st.expander(f"⚠️ View {summary['incomplete_timeslots']} Incomplete Timeslots (Missing Data)"):
-                        missing_email_count = validation_result.incomplete_timeslots['Email'].isna().sum()
-                        missing_time_count = validation_result.incomplete_timeslots['PickUpTime'].isna().sum()
-                        warnings = []
-                        if missing_email_count > 0:
-                            warnings.append(f"{missing_email_count} with missing email")
-                        if missing_time_count > 0:
-                            warnings.append(f"{missing_time_count} with missing pickup time")
-                        st.info(f"ℹ️ Data quality issues: {', '.join(warnings)}")
-                        st.dataframe(validation_result.incomplete_timeslots, width='stretch')
-    
-                if summary['duplicate_bookings'] > 0:
-                    with st.expander(f"⚠️ View {summary['duplicate_bookings']} Duplicate Bookings"):
-                        st.dataframe(validation_result.duplicate_bookings, width='stretch')
-    
-                if summary['missing_products'] > 0:
-                    with st.expander(f"⚠️ View {summary['missing_products']} Missing Products"):
-                        st.dataframe(validation_result.missing_products, width='stretch')
-    
-                if summary['missing_categories'] > 0:
-                    with st.expander(f"⚠️ View {summary['missing_categories']} Missing Categories"):
-                        st.dataframe(validation_result.missing_categories, width='stretch')
-    
-                # Download diffs report
-                st.download_button(
-                    label="📥 Download Full Validation Report (diffs.xlsx)",
-                    data=open('outputs/diffs.xlsx', 'rb').read(),
-                    file_name='diffs.xlsx',
-                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                )
-    
-                st.divider()
-    
-                # Step 4: Generate Reports
-                st.header("4️⃣ Generate Reports")
-    
-                if validation_result.has_errors():
-                    st.warning("⚠️ Validation issues detected. Review them before proceeding, or continue anyway.")
-    
-                if st.button("🚀 Generate All Reports", type="primary", width='stretch'):
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-    
-                    try:
-                        # Remove duplicates from timeslots
-                        status_text.text("Removing duplicate bookings...")
-                        df_timeslots_clean = remove_duplicate_bookings(st.session_state.df_timeslots)
-                        progress_bar.progress(10)
-    
-                        # Merge all data
-                        status_text.text("Merging datasets...")
-                        df_all_data = merge_all_data(
-                            st.session_state.df_orders,
-                            df_timeslots_clean,
-                            st.session_state.df_products,
-                            st.session_state.df_packing
-                        )
-                        df_all_data = sort_for_reports(df_all_data)
-                        progress_bar.progress(25)
-    
-                        outputs_dir = Path('outputs')
-                        template_dir = Path('templates')
-    
-                        # Save allData for debugging
-                        status_text.text("Saving merged data...")
-                        df_all_data.to_excel(outputs_dir / config.OUTPUT_FILENAME_ALLDATA, engine='openpyxl')
-                        progress_bar.progress(30)
-    
-                        # Generate packlista
-                        status_text.text("Generating packing lists...")
-                        generate_packlista(
-                            df_all_data,
-                            template_dir,
-                            outputs_dir / config.OUTPUT_FILENAME_PACKLISTA,
-                            market_type
-                        )
-                        progress_bar.progress(50)
-    
-                        # Generate hämtningslista
-                        status_text.text("Generating pickup lists...")
-                        generate_hamtningslista(
-                            df_all_data,
-                            st.session_state.df_schedule,
-                            template_dir,
-                            outputs_dir / config.OUTPUT_FILENAME_HAMTNINGSLISTA
-                        )
-                        progress_bar.progress(70)
-    
-                        # Generate semlelista (only for pask)
-                        if market_type == config.MARKET_TYPE_PASK:
-                            status_text.text("Generating semla list...")
-                            generate_semlelista(
-                                df_all_data,
-                                template_dir,
-                                outputs_dir / config.OUTPUT_FILENAME_SEMLELISTA
-                            )
-                        progress_bar.progress(85)
-    
-                        # Generate masterlista
-                        status_text.text("Generating master list...")
-                        generate_masterlista(
-                            df_all_data,
-                            outputs_dir / config.OUTPUT_FILENAME_MASTERLISTA
-                        )
-                        progress_bar.progress(100)
-    
-                        status_text.text("✅ All reports generated successfully!")
-                        st.session_state.reports_generated = True
-    
-                        st.success("🎉 All reports generated successfully!")
-    
-                    except Exception as e:
-                        st.error(f"❌ Error generating reports: {str(e)}")
-                        import traceback
-                        st.code(traceback.format_exc())
-                        st.stop()
-    
-                # Download section
-                if st.session_state.reports_generated:
-                    st.divider()
-                    st.header("5️⃣ Download Reports")
-    
-                    col1, col2 = st.columns(2)
-    
-                    with col1:
-                        # Individual downloads
-                        st.subheader("Individual Reports")
-    
-                        if Path('outputs/packlista.xlsx').exists():
-                            st.download_button(
-                                label="📥 Packlista (Packing Lists)",
-                                data=open('outputs/packlista.xlsx', 'rb').read(),
-                                file_name='packlista.xlsx',
-                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                            )
-    
-                        if Path('outputs/hämtningslista.xlsx').exists():
-                            st.download_button(
-                                label="📥 Hämtningslista (Pickup Lists)",
-                                data=open('outputs/hämtningslista.xlsx', 'rb').read(),
-                                file_name='hämtningslista.xlsx',
-                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                            )
-    
-                        if market_type == config.MARKET_TYPE_PASK and Path('outputs/semlelista.xlsx').exists():
-                            st.download_button(
-                                label="📥 Semlelista (Semla List)",
-                                data=open('outputs/semlelista.xlsx', 'rb').read(),
-                                file_name='semlelista.xlsx',
-                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                            )
-    
-                        if Path('outputs/masterlista.xlsx').exists():
-                            st.download_button(
-                                label="📥 Masterlista (Master List)",
-                                data=open('outputs/masterlista.xlsx', 'rb').read(),
-                                file_name='masterlista.xlsx',
-                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                            )
-    
-                    with col2:
-                        # Download all as ZIP
-                        st.subheader("Download All")
-    
-                        zip_buffer = io.BytesIO()
-                        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                            for report_file in Path('outputs').glob('*.xlsx'):
-                                zip_file.write(report_file, arcname=report_file.name)
-    
-                        st.download_button(
-                            label="📦 Download All Reports (ZIP)",
-                            data=zip_buffer.getvalue(),
-                            file_name=f'webshop_reports_{market_type}.zip',
-                            mime='application/zip',
-                            type="primary"
-                        )
-    
-            else:
-                st.info("👆 Please upload all three required files to continue")
+        order_reports_tab()
 
     with tabs[1]:
-        # ===== INVENTORY REPORT WORKFLOW =====
-
-        st.header("📊 Inventory Report (Lagerrapport)")
-        st.markdown("Generate inventory analysis by combining product catalog with sales data.")
-
-        st.divider()
-
-        # Step 1: File Upload
-        st.header("1️⃣ Upload Files")
-
-        st.markdown("Upload the exported files from WordPress:")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            product_export_file = st.file_uploader(
-                "Product Export (CSV)",
-                type=['csv'],
-                key='inventory_product_export',
-                help="wc-product-export.csv - Full product catalog"
-            )
-
-        with col2:
-            products_report_file = st.file_uploader(
-                "Products Report (CSV)",
-                type=['csv'],
-                key='inventory_products_report',
-                help="wc-products-report-export.csv - Sales report"
-            )
-
-        # Check if both files are uploaded
-        inventory_files_uploaded = (
-            product_export_file is not None and
-            products_report_file is not None
-        )
-
-        st.divider()
-
-        # Step 2: Load and Validate
-        if inventory_files_uploaded:
-            st.header("2️⃣ Validation & Processing")
-
-            if st.button("▶️ Load and Validate Data", type="primary", width='stretch', key='validate_inventory'):
-                with st.spinner("Loading inventory data..."):
-                    try:
-                        # Load uploaded files
-                        df_product_export = load_product_export(product_export_file)
-                        df_products_report = load_products_report_export(products_report_file)
-
-                        # Load SKU mapping from templates
-                        template_dir = Path('templates')
-                        df_sku_mapping = load_sku_mapping(template_dir)
-
-                        # Process inventory data
-                        df_inventory = prepare_lagerrapport_data(
-                            df_product_export,
-                            df_products_report,
-                            df_sku_mapping
-                        )
-
-                        # Validate
-                        validation = validate_inventory_data(
-                            df_product_export,
-                            df_products_report,
-                            df_inventory
-                        )
-
-                        # Store in session state
-                        st.session_state.df_inventory = df_inventory
-                        st.session_state.inventory_validation = validation
-                        st.session_state.inventory_data_validated = True
-
-                        st.success(f"✅ Data loaded successfully! {len(df_inventory)} products with sales activity")
-
-                    except Exception as e:
-                        st.error(f"❌ Error loading data: {str(e)}")
-                        st.exception(e)
-
-            # Show validation results if available
-            if st.session_state.get('inventory_data_validated', False):
-                st.divider()
-                validation = st.session_state.inventory_validation
-
-                if validation['warnings']:
-                    st.warning("⚠️ Validation Warnings")
-                    for warning in validation['warnings']:
-                        st.write(warning)
-
-                    # Show details in expanders
-                    if validation['sku_mismatches']:
-                        with st.expander(f"SKU Mismatches ({len(validation['sku_mismatches'])})"):
-                            st.write("SKUs in sales report but not in product export:")
-                            st.dataframe(pd.DataFrame({'SKU': validation['sku_mismatches']}))
-
-                    if len(validation['unmapped_skus']) > 0:
-                        with st.expander(f"Unmapped SKUs ({len(validation['unmapped_skus'])})"):
-                            st.write("Products with unknown sales area:")
-                            st.dataframe(validation['unmapped_skus'][['SKU', 'Product title', 'Category (SKUT)']])
-
-                    if len(validation['missing_prices']) > 0:
-                        with st.expander(f"Missing Prices ({len(validation['missing_prices'])})"):
-                            st.write("Products with missing price data:")
-                            st.dataframe(validation['missing_prices'][['SKU', 'Product title', 'Regular price']])
-
-                    if len(validation['missing_stock']) > 0:
-                        with st.expander(f"Missing Stock ({len(validation['missing_stock'])})"):
-                            st.write("Products with missing stock data:")
-                            st.dataframe(validation['missing_stock'][['SKU', 'Product title', 'Stock']])
-                else:
-                    st.success("✅ All validation checks passed!")
-
-                st.divider()
-
-                # Step 3: Generate Report
-                st.header("3️⃣ Generate Report")
-
-                if st.button("▶️ Generate Lagerrapport", type="primary", width='stretch', key='generate_inventory'):
-                    with st.spinner("Generating lagerrapport..."):
-                        try:
-                            # Create outputs directory
-                            Path('outputs').mkdir(exist_ok=True)
-
-                            # Generate report
-                            template_dir = Path('templates')
-                            output_path = Path('outputs') / config.OUTPUT_FILENAME_LAGERRAPPORT
-
-                            generate_lagerrapport(
-                                st.session_state.df_inventory,
-                                template_dir,
-                                output_path
-                            )
-
-                            st.session_state.lagerrapport_generated = True
-                            st.success("✅ Lagerrapport generated successfully!")
-
-                        except Exception as e:
-                            st.error(f"❌ Error generating report: {str(e)}")
-                            st.exception(e)
-
-                # Step 4: Download
-                if st.session_state.get('lagerrapport_generated', False):
-                    st.divider()
-                    st.header("4️⃣ Download Report")
-
-                    if Path('outputs/lagerrapport.xlsx').exists():
-                        st.download_button(
-                            label="📥 Download Lagerrapport",
-                            data=open('outputs/lagerrapport.xlsx', 'rb').read(),
-                            file_name='lagerrapport.xlsx',
-                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                            type="primary",
-                            width='stretch'
-                        )
-
-        else:
-            st.info("👆 Please upload both required files to continue")
+        inventory_tab()
 
 
 if __name__ == "__main__":

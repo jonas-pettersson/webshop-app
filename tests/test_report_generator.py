@@ -21,7 +21,7 @@ EXCEL_ERROR_VALUES = {'#NULL!', '#DIV/0!', '#VALUE!', '#REF!', '#NAME?', '#NUM!'
 
 def test_packlista_one_sheet_per_order(pask_data, templates_dir, tmp_path):
     out = tmp_path / config.OUTPUT_FILENAME_PACKLISTA
-    generate_packlista(pask_data.all_data, templates_dir, out, config.MARKET_TYPE_PASK)
+    out.write_bytes(generate_packlista(pask_data.all_data, templates_dir, config.MARKET_TYPE_PASK))
 
     wb = openpyxl.load_workbook(out)
     expected = {f'PO_{n}' for n in pask_data.all_data['OrderNumber'].unique()}
@@ -31,7 +31,7 @@ def test_packlista_one_sheet_per_order(pask_data, templates_dir, tmp_path):
 
 def test_hamtningslista_one_sheet_per_pickup_date(pask_data, templates_dir, tmp_path):
     out = tmp_path / config.OUTPUT_FILENAME_HAMTNINGSLISTA
-    generate_hamtningslista(pask_data.all_data, pask_data.schedule, templates_dir, out)
+    out.write_bytes(generate_hamtningslista(pask_data.all_data, pask_data.schedule, templates_dir))
 
     wb = openpyxl.load_workbook(out)
     expected = {f'Hämtas {d.date()}' for d in pask_data.all_data['PickUpDate'].unique()}
@@ -40,7 +40,7 @@ def test_hamtningslista_one_sheet_per_pickup_date(pask_data, templates_dir, tmp_
 
 def test_semlelista_single_sheet_with_all_semla_lines(pask_data, templates_dir, tmp_path):
     out = tmp_path / config.OUTPUT_FILENAME_SEMLELISTA
-    generate_semlelista(pask_data.all_data, templates_dir, out)
+    out.write_bytes(generate_semlelista(pask_data.all_data, templates_dir))
 
     wb = openpyxl.load_workbook(out)
     assert wb.sheetnames == ['Semla-Lista']
@@ -58,7 +58,7 @@ def test_semlelista_single_sheet_with_all_semla_lines(pask_data, templates_dir, 
 
 def test_masterlista_one_row_per_order(pask_data, tmp_path):
     out = tmp_path / config.OUTPUT_FILENAME_MASTERLISTA
-    generate_masterlista(pask_data.all_data, out)
+    out.write_bytes(generate_masterlista(pask_data.all_data))
 
     sheet = openpyxl.load_workbook(out).active
     assert sheet.max_row - 1 == pask_data.all_data['OrderNumber'].nunique()
@@ -66,7 +66,7 @@ def test_masterlista_one_row_per_order(pask_data, tmp_path):
 
 def test_lagerrapport_rows_match_inventory(pask_inventory, templates_dir, tmp_path):
     out = tmp_path / config.OUTPUT_FILENAME_LAGERRAPPORT
-    generate_lagerrapport(pask_inventory.inventory, templates_dir, out)
+    out.write_bytes(generate_lagerrapport(pask_inventory.inventory, templates_dir))
 
     wb = openpyxl.load_workbook(out)
     assert wb.sheetnames == ['Content']

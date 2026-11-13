@@ -2,86 +2,101 @@
 
 Validates relationships between orders, timeslots, products, and packing categories.
 Generates comprehensive validation report (diffs.xlsx).
+
+All findings are warnings: report generation always proceeds, and every
+affected row is listed in diffs.xlsx so nothing disappears silently.
 """
 
-from pathlib import Path
 from typing import Dict
 
 import numpy as np
 import pandas as pd
-from openpyxl import load_workbook
 
-from .excel_utils import align_cell_width_for
+from .data_processor import prepare_merge_inputs
+from .excel_utils import dataframe_to_xlsx_bytes
+
+
+TIMESLOT_COLUMNS = ['Email', 'PickUpDate', 'PickUpTime', 'FullNameTimeslot', 'Telephone']
+
+# Every check: (ValidationResult attribute, UI label)
+CHECKS = [
+    ('orders_no_timeslot', 'Orders w/o Timeslot'),
+    ('timeslots_no_order', 'Timeslots w/o Order'),
+    ('incomplete_timeslots', 'Incomplete Timeslots'),
+    ('duplicate_bookings', 'Duplicate Bookings'),
+    ('bookings_outside_schedule', 'Outside Schedule'),
+    ('missing_products', 'Missing Products'),
+    ('duplicate_products', 'Duplicate Products'),
+    ('missing_categories', 'Missing Categories'),
+    ('duplicate_categories', 'Duplicate Categories'),
+]
+
+# Reasons an order line is excluded from packing/pickup lists
+REASON_NO_TIMESLOT = 'Ingen tidsbokning'
+REASON_NO_PRODUCT = 'Saknas i produktlista'
+REASON_NO_CATEGORY = 'Packningskategori saknas'
 
 
 class ValidationResult:
-    """Container for validation results."""
+    """Container for validation results (one DataFrame per check)."""
 
     def __init__(self):
-        self.orders_no_timeslot = pd.DataFrame()
-        self.timeslots_no_order = pd.DataFrame()
-        self.incomplete_timeslots = pd.DataFrame()
-        self.duplicate_bookings = pd.DataFrame()
-        self.missing_products = pd.DataFrame()
-        self.missing_categories = pd.DataFrame()
+        for attr, _ in CHECKS:
+            setattr(self, attr, pd.DataFrame())
+        # Derived: order lines that will NOT appear in packing/pickup lists
+        self.excluded_order_lines = pd.DataFrame()
 
     def has_errors(self) -> bool:
-        """Check if any validation errors were found."""
-        return (
-            len(self.orders_no_timeslot) > 0 or
-            len(self.timeslots_no_order) > 0 or
-            len(self.incomplete_timeslots) > 0 or
-            len(self.duplicate_bookings) > 0 or
-            len(self.missing_products) > 0 or
-            len(self.missing_categories) > 0
-        )
+        """Check if any validation issues were found."""
+        return any(count > 0 for count in self.get_summary().values())
 
     def get_summary(self) -> Dict[str, int]:
         """Get count of each validation issue type."""
-        return {
-            'orders_no_timeslot': len(self.orders_no_timeslot),
-            'timeslots_no_order': len(self.timeslots_no_order),
-            'incomplete_timeslots': len(self.incomplete_timeslots),
-            'duplicate_bookings': len(self.duplicate_bookings),
-            'missing_products': len(self.missing_products),
-            'missing_categories': len(self.missing_categories)
-        }
+        return {attr: len(getattr(self, attr)) for attr, _ in CHECKS}
 
 
 def validate_data(
     orders_df: pd.DataFrame,
     timeslots_df: pd.DataFrame,
     products_df: pd.DataFrame,
-    packing_df: pd.DataFrame
+    packing_df: pd.DataFrame,
+    schedule_df: pd.DataFrame = None
 ) -> ValidationResult:
     """Validate relationships between all datasets.
 
     Checks for:
-    - Orders without time bookings
+    - Orders without time bookings (including orders without email)
     - Time bookings without orders
-    - Incomplete time bookings (missing email or pickup time)
+    - Incomplete time bookings (missing email, pickup date or pickup time)
     - Duplicate time bookings (multiple per email)
+    - Bookings at a date/time that is not in the pickup schedule
     - Products in orders but not in product catalog
+    - Duplicate SKUs in the product catalog
     - Packing categories in orders but not defined
+    - Duplicate packing categories in the template
+
+    Also lists every order line that will be excluded from the reports,
+    with the reason (excluded_order_lines).
 
     Args:
         orders_df: Orders DataFrame
         timeslots_df: Timeslots DataFrame
         products_df: Products DataFrame
         packing_df: Packing categories DataFrame
+        schedule_df: Schedule DataFrame (optional; enables the schedule check)
 
     Returns:
         ValidationResult object containing all validation issues
     """
     result = ValidationResult()
 
-    # 1. Orders without time bookings (only valid orders with emails)
+    # 1. Orders without time bookings (orders without email can't be matched either)
     order_emails = orders_df['Email'].dropna().unique()
     timeslot_emails = timeslots_df['Email'].dropna().unique()
     diff_emails = np.setdiff1d(order_emails, timeslot_emails)
 
     result.orders_no_timeslot = orders_df[
-        orders_df['Email'].isin(diff_emails)
+        orders_df['Email'].isin(diff_emails) | orders_df['Email'].isna()
     ].drop_duplicates(subset=['OrderNumber'])[[
         'OrderNumber', 'FullName', 'Email',
         'OrderTotalAmount', 'OrderDate', 'CustomerNote', 'PhoneOrder'
@@ -91,25 +106,27 @@ def validate_data(
     diff_emails = np.setdiff1d(timeslot_emails, order_emails)
     result.timeslots_no_order = timeslots_df[
         timeslots_df['Email'].isin(diff_emails)
-    ][[
-        'Email', 'PickUpDate', 'PickUpTime', 'FullNameTimeslot', 'Telephone'
-    ]]
+    ][TIMESLOT_COLUMNS]
 
-    # 2b. Incomplete timeslots (missing email or pickup time) - data quality issue
+    # 2b. Incomplete timeslots (missing email, date or time) - data quality issue
     result.incomplete_timeslots = timeslots_df[
-        timeslots_df['Email'].isna() | timeslots_df['PickUpTime'].isna()
-    ][[
-        'Email', 'PickUpDate', 'PickUpTime', 'FullNameTimeslot', 'Telephone'
-    ]]
+        timeslots_df['Email'].isna()
+        | timeslots_df['PickUpDate'].isna()
+        | timeslots_df['PickUpTime'].isna()
+    ][TIMESLOT_COLUMNS]
 
     # 3. Duplicate time bookings (excluding NaN emails)
     email_counts = timeslots_df['Email'].dropna().value_counts()
     duplicate_emails = email_counts.index[email_counts.gt(1)]
     result.duplicate_bookings = timeslots_df[
         timeslots_df['Email'].isin(duplicate_emails)
-    ].sort_values(by=['Email', 'PickUpDate', 'PickUpTime'])[[
-        'Email', 'PickUpDate', 'PickUpTime', 'FullNameTimeslot', 'Telephone'
-    ]]
+    ].sort_values(by=['Email', 'PickUpDate', 'PickUpTime'])[TIMESLOT_COLUMNS]
+
+    # 3b. Bookings outside the pickup schedule
+    if schedule_df is not None:
+        result.bookings_outside_schedule = find_bookings_outside_schedule(
+            timeslots_df, schedule_df
+        )[TIMESLOT_COLUMNS]
 
     # 4. Products in orders but missing from product catalog
     order_skus = orders_df['ArticleNumber'].dropna().unique()
@@ -121,6 +138,12 @@ def validate_data(
     ][['ArticleNumber', 'ProductName']].drop_duplicates(
         subset=['ArticleNumber']
     ).sort_values(by='ArticleNumber')
+
+    # 4b. Duplicate SKUs in product catalog (the first occurrence is used)
+    result.duplicate_products = products_df[
+        products_df['ArticleNumber'].notna()
+        & products_df['ArticleNumber'].duplicated(keep=False)
+    ].sort_values(by='ArticleNumber')
 
     # 5. Packing categories in orders but not defined
     order_categories = orders_df['PackingCategoryKey'].dropna().unique()
@@ -134,100 +157,102 @@ def validate_data(
         'ProductName', 'FullName', 'Email'
     ]].sort_values(by='PackingCategory')
 
+    # 5b. Duplicate packing categories in template (the first occurrence is used)
+    result.duplicate_categories = packing_df[
+        packing_df['PackingCategoryKey'].notna()
+        & packing_df['PackingCategoryKey'].duplicated(keep=False)
+    ].sort_values(by='PackingCategoryKey')
+
+    # 6. Order lines that will be excluded from the reports
+    result.excluded_order_lines = find_excluded_order_lines(
+        orders_df, timeslots_df, products_df, packing_df
+    )
+
     return result
 
 
-def generate_diffs_report(validation_result: ValidationResult, output_path: Path):
-    """Generate Excel validation report with multiple sheets.
+def find_bookings_outside_schedule(
+    timeslots_df: pd.DataFrame,
+    schedule_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Bookings (with date and time) whose slot is not in the schedule."""
+    scheduled = set(zip(schedule_df['Date'], schedule_df['Tid']))
+    booked = timeslots_df.dropna(subset=['PickUpDate', 'PickUpTime'])
+    outside = [
+        (date.date(), time) not in scheduled
+        for date, time in zip(booked['PickUpDate'], booked['PickUpTime'])
+    ]
+    return booked[outside]
 
-    Creates diffs.xlsx with 6 sheets showing validation issues.
+
+def find_excluded_order_lines(
+    orders_df: pd.DataFrame,
+    timeslots_df: pd.DataFrame,
+    products_df: pd.DataFrame,
+    packing_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Order lines that merge_all_data() will drop, with the (first) reason.
+
+    Mirrors merge_all_data(): uses the same prepare_merge_inputs(), and an
+    inner join on a key drops exactly the rows whose key is missing on the
+    right-hand side.
+    """
+    timeslots, products, packing = prepare_merge_inputs(timeslots_df, products_df, packing_df)
+
+    no_timeslot = ~orders_df['Email'].isin(timeslots['Email'])
+    no_product = ~orders_df['ArticleNumber'].isin(products['ArticleNumber'])
+    no_category = ~orders_df['PackingCategoryKey'].isin(packing['PackingCategoryKey'])
+
+    reason = np.select(
+        [no_timeslot, no_product, no_category],
+        [REASON_NO_TIMESLOT, REASON_NO_PRODUCT, REASON_NO_CATEGORY],
+        default=''
+    )
+    excluded = orders_df[[
+        'OrderNumber', 'FullName', 'Email', 'ArticleNumber', 'ProductName',
+        'Quantity', 'PackingCategory'
+    ]].assign(Reason=reason)
+    return excluded[excluded['Reason'] != '']
+
+
+# (diffs.xlsx sheet name, ValidationResult attribute) - in sheet order.
+# The first six are the original notebook's sheets.
+DIFFS_SHEETS = [
+    ('Beställning utan tidsbokning', 'orders_no_timeslot'),
+    ('Tidsbokning utan beställning', 'timeslots_no_order'),
+    ('Ofullständiga tidsbokningar', 'incomplete_timeslots'),
+    ('Dubbla tidsbokningar', 'duplicate_bookings'),
+    ('Saknas i produktlista', 'missing_products'),
+    ('Packningskategori saknas', 'missing_categories'),
+    ('Utanför hämtschema', 'bookings_outside_schedule'),
+    ('Dubbla produkter', 'duplicate_products'),
+    ('Dubbla packningskategorier', 'duplicate_categories'),
+    ('Saknas i packlistor', 'excluded_order_lines'),
+]
+
+
+def generate_diffs_report(validation_result: ValidationResult) -> bytes:
+    """Build the validation report (diffs.xlsx), one sheet per check.
 
     Args:
         validation_result: ValidationResult object from validate_data()
-        output_path: Path where diffs.xlsx should be written
+
+    Returns:
+        bytes: The .xlsx file content
     """
-    # Remove existing file
-    if output_path.exists():
-        output_path.unlink()
-
-    # Sheet 1: Orders without time bookings
-    validation_result.orders_no_timeslot.to_excel(
-        output_path,
-        sheet_name='Beställning utan tidsbokning',
-        engine='openpyxl'
-    )
-
-    workbook = load_workbook(filename=output_path)
-    sheet = workbook['Beställning utan tidsbokning']
-    align_cell_width_for(sheet)
-    workbook.save(filename=output_path)
-
-    # Sheet 2: Time bookings without orders
-    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
-        validation_result.timeslots_no_order.to_excel(
-            writer,
-            sheet_name='Tidsbokning utan beställning'
-        )
-
-    workbook = load_workbook(filename=output_path)
-    sheet = workbook['Tidsbokning utan beställning']
-    align_cell_width_for(sheet)
-    workbook.save(filename=output_path)
-
-    # Sheet 3: Incomplete timeslots (missing data)
-    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
-        validation_result.incomplete_timeslots.to_excel(
-            writer,
-            sheet_name='Ofullständiga tidsbokningar'
-        )
-
-    workbook = load_workbook(filename=output_path)
-    sheet = workbook['Ofullständiga tidsbokningar']
-    align_cell_width_for(sheet)
-    workbook.save(filename=output_path)
-
-    # Sheet 4: Duplicate time bookings
-    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
-        validation_result.duplicate_bookings.to_excel(
-            writer,
-            sheet_name='Dubbla tidsbokningar'
-        )
-
-    workbook = load_workbook(filename=output_path)
-    sheet = workbook['Dubbla tidsbokningar']
-    align_cell_width_for(sheet)
-    workbook.save(filename=output_path)
-
-    # Sheet 5: Missing products
-    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
-        validation_result.missing_products.to_excel(
-            writer,
-            sheet_name='Saknas i produktlista'
-        )
-
-    workbook = load_workbook(filename=output_path)
-    sheet = workbook['Saknas i produktlista']
-    align_cell_width_for(sheet)
-    workbook.save(filename=output_path)
-
-    # Sheet 6: Missing packing categories
-    with pd.ExcelWriter(output_path, mode='a', engine='openpyxl') as writer:
-        validation_result.missing_categories.to_excel(
-            writer,
-            sheet_name='Packningskategori saknas'
-        )
-
-    workbook = load_workbook(filename=output_path)
-    sheet = workbook['Packningskategori saknas']
-    align_cell_width_for(sheet)
-    workbook.save(filename=output_path)
+    sheets = {
+        sheet_name: getattr(validation_result, attr)
+        for sheet_name, attr in DIFFS_SHEETS
+    }
+    return dataframe_to_xlsx_bytes(sheets, align_widths=True)
 
 
 def remove_duplicate_bookings(timeslots_df: pd.DataFrame) -> pd.DataFrame:
     """Remove duplicate time bookings, keeping only the first booking per email.
 
     This should be called AFTER validation report is generated, so duplicates
-    are reported but then removed for processing.
+    are reported but then removed for processing. Bookings without email are
+    all kept (they are reported as incomplete and can't match an order).
 
     Args:
         timeslots_df: Timeslots DataFrame (will not be modified)
@@ -235,7 +260,9 @@ def remove_duplicate_bookings(timeslots_df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         New DataFrame with duplicates removed
     """
-    return timeslots_df.drop_duplicates(subset=['Email'], keep='first')
+    has_email = timeslots_df['Email'].notna()
+    deduped = timeslots_df[has_email].drop_duplicates(subset=['Email'], keep='first')
+    return pd.concat([deduped, timeslots_df[~has_email]]).sort_index()
 
 
 def validate_inventory_data(

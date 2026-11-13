@@ -64,8 +64,10 @@ def load_orders(file_obj: BinaryIO) -> pd.DataFrame:
     # Convert emails to lowercase for matching
     df['Email'] = df['Email'].str.lower()
 
-    # Create packing category key
-    df['PackingCategory'] = df['PackingCategory'].transform(lambda x: str(x))
+    # Create packing category key. A missing category becomes '' (not the
+    # string 'nan'), so it can never match a packing template row and is
+    # reported by validation as a missing category.
+    df['PackingCategory'] = df['PackingCategory'].fillna('').astype(str)
     df['PackingCategoryKey'] = df['PackingCategory'].str.lower()
 
     return df
@@ -153,17 +155,22 @@ def load_packing_categories(market_type: str, template_dir: Path) -> pd.DataFram
 
     df.columns = ['PickUpArea', 'PackingCategory']
 
+    # Add index for sorting (before dropping rows: the template's row
+    # position defines the packing order)
+    df['PackingCategoryIndex'] = df.index
+
+    # Blank template rows are visual separators, not categories. Left in,
+    # each would become a 'nan' key and multiply uncategorized order lines.
+    df = df.dropna(subset=['PackingCategory']).copy()
+
     # Create packing category key
-    df['PackingCategory'] = df['PackingCategory'].transform(lambda x: str(x))
+    df['PackingCategory'] = df['PackingCategory'].astype(str)
     df['PackingCategoryKey'] = df['PackingCategory'].str.lower()
 
     # Replace underscores in pickup area names
     df['PickUpArea'] = df['PickUpArea'].str.replace('_', ' ')
 
-    # Add index for sorting
-    df['PackingCategoryIndex'] = df.index
-
-    return df
+    return df[['PickUpArea', 'PackingCategory', 'PackingCategoryKey', 'PackingCategoryIndex']]
 
 
 def load_schedule(market_type: str, template_dir: Path) -> pd.DataFrame:
