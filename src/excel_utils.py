@@ -1,14 +1,15 @@
-"""Excel template manipulation utilities.
+"""Excel helpers: template workbooks, row insertion, safe cell writing.
 
-These functions handle the sophisticated Excel template system with named ranges,
-dynamic row insertion, and format preservation.
+ReportTemplate wraps the template system (named ranges, a 'template' sheet
+that is copied per report sheet, row insertion with formatting).
 """
 
 import io
 from copy import copy
 
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils.cell import coordinate_to_tuple
 
 
 def excel_value(value):
@@ -78,53 +79,70 @@ def dataframe_to_xlsx_bytes(sheets: dict, align_widths: bool = False) -> bytes:
     return buffer.getvalue()
 
 
-def get_first_cell_for_named_range(workbook, sheet, range_name):
-    """Extract the first cell coordinate from a workbook-level named range.
+class ReportTemplate:
+    """An Excel template whose sheet 'template' is copied for each report sheet.
 
-    Args:
-        workbook: openpyxl Workbook object
-        sheet: openpyxl Worksheet object
-        range_name: Name of the defined range in the workbook
+    The template defines named ranges (e.g. 'FullName', 'ArticleNumber').
+    fill(sheet, 'FullName', value, row_offset=3) writes into the cell the
+    name points at, shifted down by row_offset rows. Unknown names are
+    ignored, so a template may leave out fields it doesn't show.
 
-    Returns:
-        str: Cell coordinate (e.g., 'A1') or empty string if not found
+    Usage:
+        tpl = ReportTemplate(path)
+        sheet = tpl.new_sheet('PO_123')
+        tpl.fill(sheet, 'FullName', 'Anna')
+        data = tpl.to_bytes()     # removes the 'template' sheet
     """
-    cell_name_list = []
-    first_cell_tuple = ()
 
-    if range_name in workbook.defined_names:
-        cell_name_list = [
-            (s, c) for s, c in workbook.defined_names[range_name].destinations
-            if (s == sheet.title)
-        ]
+    SHEET_NAME = 'template'
 
-    if cell_name_list:
-        first_cell_tuple = cell_name_list[0]
-        return first_cell_tuple[1]
+    def __init__(self, path):
+        self.workbook = load_workbook(filename=path)
+        self.sheet = self.workbook[self.SHEET_NAME]
+        # name -> (row, column) of the first cell on the template sheet
+        self._positions = {}
+        for name, defined_name in self.workbook.defined_names.items():
+            for sheet_title, coordinate in defined_name.destinations:
+                if sheet_title == self.sheet.title:
+                    row, column = coordinate_to_tuple(coordinate.replace('$', ''))
+                    self._positions[name] = (row, column)
+                    break
 
-    return ''
+    def row(self, name: str) -> int:
+        """Template row of a named cell."""
+        return self._positions[name][0]
 
+    def new_sheet(self, title: str):
+        """Copy the template sheet into a new sheet with the given title."""
+        sheet = self.workbook.copy_worksheet(self.sheet)
+        sheet.title = title
+        return sheet
 
-def fill_cell_for_attribute(range_name, workbook, template, sheet, row_offset, value):
-    """Fill a cell using named range lookup with row offset.
+    def fill(self, sheet, name: str, value, row_offset: int = 0) -> None:
+        """Write value into the named cell, row_offset rows below its template position."""
+        if name not in self._positions:
+            return
+        row, column = self._positions[name]
+        set_cell_value(sheet.cell(row=row + row_offset, column=column), value)
 
-    This function locates a named range in the template, applies a row offset,
-    and fills the corresponding cell in the target sheet with the provided value.
+    def fill_many(self, sheet, record, names, row_offset: int = 0) -> None:
+        """fill() for several names, taking each value from record[name]."""
+        for name in names:
+            self.fill(sheet, name, record[name], row_offset)
 
-    Args:
-        range_name: Name of the defined range in the workbook
-        workbook: openpyxl Workbook object
-        template: Template worksheet (source)
-        sheet: Target worksheet (destination)
-        row_offset: Number of rows to offset from the named range position
-        value: Value to write to the cell
-    """
-    template_cell_number = get_first_cell_for_named_range(workbook, template, range_name)
-    if not template_cell_number:
-        return
+    def insert_row(self, sheet, source_row: int, target_row: int) -> None:
+        """Insert a row in sheet, formatted like template row source_row."""
+        insert_row_and_copy_format(self.sheet, sheet, source_row, target_row)
 
-    target_cell_number = template[template_cell_number].offset(row=row_offset).coordinate
-    set_cell_value(sheet[target_cell_number], value)
+    def copy_row_heights(self, sheet, source_row: int, target_row: int, count: int) -> None:
+        """Give count rows from target_row the heights of the template rows from source_row."""
+        for j in range(count):
+            sheet.row_dimensions[target_row + j].height =                 self.sheet.row_dimensions[source_row + j].height
+
+    def to_bytes(self) -> bytes:
+        """Remove the template sheet and return the finished .xlsx."""
+        self.workbook.remove(self.sheet)
+        return workbook_to_bytes(self.workbook)
 
 
 def get_merged_cells_or_none(sheet, row, column):

@@ -1,26 +1,22 @@
 """Report generation for WebShop Report system.
 
-Generates Excel reports using template-based approach:
+Generates Excel reports from templates (see excel_utils.ReportTemplate):
 - Packlista (packing lists per order)
 - Hämtningslista (pickup schedules by date)
-- Semlelista (special product list for pask market)
+- Semlelista (semla orders by date and hour)
 - Masterlista (master order list)
+- Lagerrapport (inventory report)
+
+Every generator returns the finished .xlsx as bytes.
 """
 
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from openpyxl import load_workbook
 
 from . import config
-from .excel_utils import (
-    get_first_cell_for_named_range,
-    fill_cell_for_attribute,
-    insert_row_and_copy_format,
-    workbook_to_bytes,
-    dataframe_to_xlsx_bytes,
-)
+from .excel_utils import ReportTemplate, dataframe_to_xlsx_bytes
 
 
 # Weekday names in Swedish
@@ -34,9 +30,35 @@ WEEKDAY_DICT = {
     6: 'Sön'
 }
 
-
 SLOT_LABEL_NOT_SCHEDULED = '{time:%H:%M} (ej i schema)'
 SLOT_LABEL_NO_TIME = 'Ingen tid'
+
+# Named ranges filled from the data (template name == DataFrame column)
+PACKLISTA_HEADER_FIELDS = ['FullName', 'OrderTotalAmount', 'CustomerNote',
+                           'OrderNumber', 'Telephone', 'PickUpDate', 'PickUpTime']
+PACKLISTA_LINE_FIELDS = ['ArticleNumber', 'Quantity', 'ProductName', 'ItemCost', 'PickUpArea']
+HAMTNINGSLISTA_ORDER_FIELDS = ['OrderNumber', 'FullName', 'Telephone',
+                               'OrderTotalAmount', 'CustomerNote']
+SEMLELISTA_HEADER_FIELDS = ['ArticleNumber', 'ProductName']
+SEMLELISTA_ORDER_FIELDS = ['Quantity', 'OrderNumber', 'FullName', 'Email',
+                           'PickUpDate', 'PickUpTime']
+
+# Lagerrapport: template named range -> inventory DataFrame column
+LAGERRAPPORT_FIELDS = {
+    'SKU': 'SKU',
+    'ProductTitle': 'Product title',
+    'CategorySKUT': 'Category (SKUT)',
+    'Category': 'Category',
+    'RegularPrice': 'Regular price',
+    'ItemsSold': 'Items sold',
+    'Stock': 'Stock',
+    'TaxClass': 'Tax class',
+    'TotalSales': 'Total sales',
+    'TotalTax': 'Total tax',
+}
+
+# Number of footer rows below the list whose heights are copied from the template
+FOOTER_ROWS = 10
 
 
 def _pickup_slots(scheduled_times, booked_times):
@@ -60,13 +82,11 @@ def _pickup_slots(scheduled_times, booked_times):
     return slots
 
 
-def generate_packlista(
-    all_data_df: pd.DataFrame,
-    template_path: Path
-) -> bytes:
-    """Generate packing lists (one sheet per order).
+def generate_packlista(all_data_df: pd.DataFrame, template_path: Path) -> bytes:
+    """Generate packing lists: one sheet per order, lines grouped by pickup area.
 
-    Builds packlista.xlsx with one worksheet per order, grouped by packing area.
+    Template layout: header fields, then an item row (named ranges of
+    PACKLISTA_LINE_FIELDS), a separator row, then the footer.
 
     Args:
         all_data_df: Merged and sorted DataFrame
@@ -75,70 +95,39 @@ def generate_packlista(
     Returns:
         bytes: The .xlsx file content
     """
-    # Load workbook and template sheet (the output is built in memory)
-    workbook = load_workbook(filename=template_path)
-    template_sheet = workbook['template']
+    tpl = ReportTemplate(template_path)
+    item_row = tpl.row('ArticleNumber')
+    separator_row = item_row + 1
 
-    # Get header row position
-    article_cell = get_first_cell_for_named_range(workbook, template_sheet, 'ArticleNumber')
-    header_row = template_sheet[article_cell].row
+    # Already sorted by pickup date/time. dropna=False: orders with missing
+    # pickup date/time still get a list.
+    for _, order in all_data_df.groupby(
+        ['PickUpDate', 'PickUpTime', 'OrderNumber'], dropna=False
+    ):
+        first = order.iloc[0]
+        sheet = tpl.new_sheet(f"PO_{first['OrderNumber']}")
+        tpl.fill_many(sheet, first, PACKLISTA_HEADER_FIELDS)
+        sheet.delete_rows(idx=item_row, amount=2)  # template item + separator row
 
-    # Group by order number (already sorted by pickup date/time).
-    # dropna=False: orders with missing pickup date/time still get a list.
-    df_grouped_by_order = all_data_df.groupby(
-        by=['PickUpDate', 'PickUpTime', 'OrderNumber'], dropna=False
-    )
+        rows = 0        # rows inserted so far
+        separators = 0  # of which separator rows (not numbered)
 
-    for index, group in df_grouped_by_order:
-        # Create new sheet for this order
-        new_sheet = workbook.copy_worksheet(template_sheet)
-        order_number = group.iloc[0]['OrderNumber']
-        new_sheet.title = 'PO_' + str(order_number)
+        # sort=False keeps the template's packing order
+        for _, area_lines in order.groupby('PickUpArea', sort=False, dropna=False):
+            for _, line in area_lines.iterrows():
+                tpl.insert_row(sheet, item_row, item_row + rows)
+                tpl.fill_many(sheet, line, PACKLISTA_LINE_FIELDS, row_offset=rows)
+                tpl.fill(sheet, 'RowNumber', rows + 1 - separators, row_offset=rows)
+                rows += 1
 
-        # Fill header information
-        for range_name in ['FullName', 'OrderTotalAmount', 'CustomerNote',
-                          'OrderNumber', 'Telephone', 'PickUpDate', 'PickUpTime']:
-            field_value = group.iloc[0][range_name]
-            fill_cell_for_attribute(range_name, workbook, template_sheet, new_sheet, 0, field_value)
+            tpl.insert_row(sheet, separator_row, item_row + rows)
+            rows += 1
+            separators += 1
 
-        # Delete template rows
-        new_sheet.delete_rows(idx=header_row, amount=2)
+        tpl.copy_row_heights(sheet, item_row + 2, item_row + rows, FOOTER_ROWS)
+        tpl.fill(sheet, 'NumberOfRows', str(rows - separators))
 
-        # Group by pickup area (sort=False preserves template order)
-        df_grouped_by_area = group.groupby('PickUpArea', sort=False, dropna=False)
-
-        i = 0  # Row counter
-        d = 0  # Deleted row counter (for row numbering)
-
-        for area, sub_group in df_grouped_by_area:
-            # Add rows for each item in this area
-            for sub_index, row in sub_group.iterrows():
-                insert_row_and_copy_format(template_sheet, new_sheet, header_row, header_row + i)
-
-                # Fill item data
-                for range_name in ['ArticleNumber', 'Quantity', 'ProductName', 'ItemCost', 'PickUpArea']:
-                    field_value = row[range_name]
-                    fill_cell_for_attribute(range_name, workbook, template_sheet, new_sheet, i, field_value)
-
-                i += 1
-                fill_cell_for_attribute('RowNumber', workbook, template_sheet, new_sheet, i - 1, i - d)
-
-            # Add separator row after each area
-            insert_row_and_copy_format(template_sheet, new_sheet, header_row + 1, header_row + i)
-            i += 1
-            d += 1
-
-        # Copy footer formatting
-        for j in range(0, 10):
-            offset = header_row + i
-            new_sheet.row_dimensions[offset + j].height = template_sheet.row_dimensions[header_row + 2 + j].height
-
-        # Fill total number of rows
-        fill_cell_for_attribute('NumberOfRows', workbook, template_sheet, new_sheet, 0, str(i - d))
-
-    # Remove template sheet and save
-    workbook.remove(template_sheet)
-    return workbook_to_bytes(workbook)
+    return tpl.to_bytes()
 
 
 def generate_hamtningslista(
@@ -146,201 +135,125 @@ def generate_hamtningslista(
     schedule_df: pd.DataFrame,
     template_dir: Path
 ) -> bytes:
-    """Generate pickup lists (one sheet per pickup date).
+    """Generate pickup lists: one sheet per pickup date, organized by time slot.
 
-    Creates hämtningslista.xlsx with one worksheet per date, organized by time slots.
+    Template layout: a slot header row (named range 'PickUpTime'), then an
+    order row (HAMTNINGSLISTA_ORDER_FIELDS, 'RowNumber').
 
     Args:
         all_data_df: Merged and sorted DataFrame
         schedule_df: Schedule DataFrame with authorized pickup times
         template_dir: Path to templates directory
+
+    Returns:
+        bytes: The .xlsx file content
     """
-    # Load template (the output is built in memory)
-    template_path = template_dir / config.TEMPLATE_FILENAME_HAMTLISTA
+    tpl = ReportTemplate(template_dir / config.TEMPLATE_FILENAME_HAMTLISTA)
+    slot_row = tpl.row('PickUpTime')
+    order_row = slot_row + 1
 
-
-    # Load workbook and template sheet
-    workbook = load_workbook(filename=template_path)
-    template_sheet = workbook['template']
-
-    # Get header row position
-    pickup_time_cell = get_first_cell_for_named_range(workbook, template_sheet, 'PickUpTime')
-    header_row = template_sheet[pickup_time_cell].row
-
-    # Group by pickup date (one sheet per date; missing date sorts last)
-    df_grouped_by_date = all_data_df.drop_duplicates(subset=['OrderNumber']).groupby(
-        'PickUpDate', dropna=False
-    )
-
-    for pickup_date, group in df_grouped_by_date:
+    # One sheet per date; missing date sorts last
+    orders = all_data_df.drop_duplicates(subset=['OrderNumber'])
+    for pickup_date, day_orders in orders.groupby('PickUpDate', dropna=False):
         has_date = pd.notna(pickup_date)
 
-        # Create new sheet for this date
-        new_sheet = workbook.copy_worksheet(template_sheet)
-        new_sheet.title = 'Hämtas ' + (str(pickup_date.date()) if has_date else 'utan datum')
+        sheet = tpl.new_sheet('Hämtas ' + (str(pickup_date.date()) if has_date else 'utan datum'))
+        tpl.fill(sheet, 'Weekday', WEEKDAY_DICT[pickup_date.weekday()] if has_date else '')
+        tpl.fill(sheet, 'PickUpDate', pickup_date.date() if has_date else None)
+        tpl.fill(sheet, 'CreationDateTime', str(datetime.now()))
+        sheet.delete_rows(idx=slot_row, amount=2)  # template slot + order row
 
-        # Fill date information
-        fill_cell_for_attribute('Weekday', workbook, template_sheet, new_sheet, 0,
-                                WEEKDAY_DICT[pickup_date.weekday()] if has_date else '')
-        fill_cell_for_attribute('PickUpDate', workbook, template_sheet, new_sheet, 0,
-                                pickup_date.date() if has_date else None)
-        fill_cell_for_attribute('CreationDateTime', workbook, template_sheet, new_sheet, 0, str(datetime.now()))
-
-        # Delete template rows
-        new_sheet.delete_rows(idx=header_row, amount=2)
-
-        # Sort by full name
-        group = group.sort_values(by=['FullName'])
-
-        # Scheduled times for this date, plus any booked time not in the schedule
+        day_orders = day_orders.sort_values(by=['FullName'])
         scheduled_times = (
             schedule_df[schedule_df['Date'] == pickup_date.date()]['Tid'] if has_date else []
         )
-        slots = _pickup_slots(scheduled_times, group['PickUpTime'])
 
-        i = 0  # Row counter
-        d = 0  # Deleted row counter
+        rows = 0          # rows inserted so far
+        slot_headers = 0  # of which slot header rows (not numbered)
 
-        for time, label in slots:
-            # Add time slot header row
-            insert_row_and_copy_format(template_sheet, new_sheet, header_row, header_row + i)
-            fill_cell_for_attribute('PickUpTime', workbook, template_sheet, new_sheet, i, label)
-            i += 1
-            d += 1
+        for time, label in _pickup_slots(scheduled_times, day_orders['PickUpTime']):
+            tpl.insert_row(sheet, slot_row, slot_row + rows)
+            tpl.fill(sheet, 'PickUpTime', label, row_offset=rows)
+            rows += 1
+            slot_headers += 1
 
-            # Add orders for this time slot if any exist
             if time is None:
-                sub_group = group[group['PickUpTime'].isna()]
+                slot_orders = day_orders[day_orders['PickUpTime'].isna()]
             else:
-                sub_group = group[group['PickUpTime'] == time]
+                slot_orders = day_orders[day_orders['PickUpTime'] == time]
 
-            if len(sub_group) > 0:
-                for index, row in sub_group.iterrows():
-                    insert_row_and_copy_format(template_sheet, new_sheet, header_row + 1, header_row + i)
+            # An empty slot still gets one (blank, numbered) row to write in
+            for order in [row for _, row in slot_orders.iterrows()] or [None]:
+                tpl.insert_row(sheet, order_row, slot_row + rows)
+                # order fields are named on order_row, i.e. one row below slot_row
+                if order is not None:
+                    tpl.fill_many(sheet, order, HAMTNINGSLISTA_ORDER_FIELDS, row_offset=rows - 1)
+                tpl.fill(sheet, 'RowNumber', rows + 1 - slot_headers, row_offset=rows - 1)
+                rows += 1
 
-                    # Fill order data
-                    for range_name in ['OrderNumber', 'FullName', 'Telephone', 'OrderTotalAmount', 'CustomerNote']:
-                        field_value = row[range_name]
-                        fill_cell_for_attribute(range_name, workbook, template_sheet, new_sheet, i - 1, field_value)
-
-                    i += 1
-                    fill_cell_for_attribute('RowNumber', workbook, template_sheet, new_sheet, i - 2, i - d)
-            else:
-                # Empty time slot - add placeholder row
-                insert_row_and_copy_format(template_sheet, new_sheet, header_row + 1, header_row + i)
-                i += 1
-                fill_cell_for_attribute('RowNumber', workbook, template_sheet, new_sheet, i - 2, i - d)
-
-    # Remove template sheet and save
-    workbook.remove(template_sheet)
-    return workbook_to_bytes(workbook)
+    return tpl.to_bytes()
 
 
-def generate_semlelista(
-    all_data_df: pd.DataFrame,
-    template_dir: Path
-) -> bytes:
-    """Generate semla list (special product list for pask market only).
+def generate_semlelista(all_data_df: pd.DataFrame, template_dir: Path) -> bytes:
+    """Generate the semla list: semla orders grouped by date and hour.
 
-    Creates semlelista.xlsx with orders for semla items grouped by date and hour.
+    Template layout: an order row (SEMLELISTA_ORDER_FIELDS), then a summary
+    row per hour ('Day', 'Hour', 'NumberOfItemsName', 'NumberOfItems').
 
     Args:
         all_data_df: Merged and sorted DataFrame
         template_dir: Path to templates directory
+
+    Returns:
+        bytes: The .xlsx file content
     """
-    # Load template (the output is built in memory)
-    template_path = template_dir / config.TEMPLATE_FILENAME_SEMLELISTA
+    tpl = ReportTemplate(template_dir / config.TEMPLATE_FILENAME_SEMLELISTA)
+    order_row = tpl.row('OrderNumber')
+    summary_row = order_row + 1
 
-
-    # Load workbook and template sheet
-    workbook = load_workbook(filename=template_path)
-    template_sheet = workbook['template']
-
-    # Filter for semla orders only
-    df_semla = all_data_df[all_data_df['ArticleNumber'] == config.ARTICLE_NUMBER_SEMLA]
-    df_semla = df_semla[[
-        'ArticleNumber', 'ProductName', 'Quantity', 'OrderNumber',
-        'FullName', 'Email', 'PickUpDate', 'PickUpTime'
-    ]]
-
-    # Extract pickup hour (missing time -> <NA>, grouped last as "Ingen tid")
-    df_semla = df_semla.copy()
+    df_semla = all_data_df[all_data_df['ArticleNumber'] == config.ARTICLE_NUMBER_SEMLA].copy()
+    # Missing time -> <NA>, grouped last as "Ingen tid"
     df_semla['PickUpHour'] = pd.array(
         [t.hour if pd.notna(t) else None for t in df_semla['PickUpTime']], dtype='Int64'
     )
 
-    # Get header row position
-    order_number_cell = get_first_cell_for_named_range(workbook, template_sheet, 'OrderNumber')
-    header_row = template_sheet[order_number_cell].row
+    sheet = tpl.new_sheet('Semla-Lista')
+    header = df_semla.iloc[0] if len(df_semla) > 0 else dict.fromkeys(SEMLELISTA_HEADER_FIELDS, '')
+    tpl.fill_many(sheet, header, SEMLELISTA_HEADER_FIELDS)
+    sheet.delete_rows(idx=order_row, amount=2)  # template order + summary row
 
-    # Create single sheet
-    new_sheet = workbook.copy_worksheet(template_sheet)
-    new_sheet.title = 'Semla-Lista'
+    rows = 0
+    for day, day_orders in df_semla.groupby('PickUpDate', dropna=False):
+        for hour, hour_orders in day_orders.groupby('PickUpHour', dropna=False):
+            for _, order in hour_orders.iterrows():
+                tpl.insert_row(sheet, order_row, order_row + rows)
+                tpl.fill_many(sheet, order, SEMLELISTA_ORDER_FIELDS, row_offset=rows)
+                rows += 1
 
-    # Fill header information
-    for range_name in ['ArticleNumber', 'ProductName']:
-        field_value = ''
-        if len(df_semla) > 0:
-            field_value = df_semla.iloc[0][range_name]
-        fill_cell_for_attribute(range_name, workbook, template_sheet, new_sheet, 0, field_value)
+            # Summary row for this hour (its names sit one row below order_row)
+            tpl.insert_row(sheet, summary_row, order_row + rows)
+            offset = rows - 1
+            tpl.fill(sheet, 'Day', day.strftime('%d.%m') if pd.notna(day) else 'Inget datum',
+                     row_offset=offset)
+            tpl.fill(sheet, 'Hour', f'{hour}:00 - {hour + 1}:00' if pd.notna(hour)
+                     else SLOT_LABEL_NO_TIME, row_offset=offset)
+            tpl.fill(sheet, 'NumberOfItemsName', 'Antal:', row_offset=offset)
+            tpl.fill(sheet, 'NumberOfItems', hour_orders['Quantity'].sum(), row_offset=offset)
+            rows += 2
 
-    # Delete template rows
-    new_sheet.delete_rows(idx=header_row, amount=2)
+        tpl.copy_row_heights(sheet, order_row + 2, order_row + rows, FOOTER_ROWS)
 
-    i = 0
-
-    # Group by pickup date
-    df_grouped_by_date = df_semla.groupby('PickUpDate', dropna=False)
-
-    for day, group in df_grouped_by_date:
-        # Group by hour
-        df_grouped_by_hour = group.groupby('PickUpHour', dropna=False)
-
-        for hour, sub_group in df_grouped_by_hour:
-            # Add individual orders
-            for sub_index, row in sub_group.iterrows():
-                insert_row_and_copy_format(template_sheet, new_sheet, header_row, header_row + i)
-
-                for range_name in ['Quantity', 'OrderNumber', 'FullName', 'Email', 'PickUpDate', 'PickUpTime']:
-                    field_value = row[range_name]
-                    fill_cell_for_attribute(range_name, workbook, template_sheet, new_sheet, i, field_value)
-
-                i += 1
-
-            # Add summary row for this hour
-            insert_row_and_copy_format(template_sheet, new_sheet, header_row + 1, header_row + i)
-            day_string = day.strftime('%d.%m') if pd.notna(day) else 'Inget datum'
-            fill_cell_for_attribute('Day', workbook, template_sheet, new_sheet, i - 1, day_string)
-
-            if pd.notna(hour):
-                time_interval_string = str(hour) + ':00 - ' + str(hour + 1) + ':00'
-            else:
-                time_interval_string = SLOT_LABEL_NO_TIME
-            fill_cell_for_attribute('Hour', workbook, template_sheet, new_sheet, i - 1, time_interval_string)
-            fill_cell_for_attribute('NumberOfItemsName', workbook, template_sheet, new_sheet, i - 1, 'Antal:')
-
-            number_of_items = sub_group['Quantity'].sum()
-            fill_cell_for_attribute('NumberOfItems', workbook, template_sheet, new_sheet, i - 1, number_of_items)
-
-            i += 2
-
-        # Copy footer formatting
-        for j in range(0, 10):
-            offset = header_row + i
-            new_sheet.row_dimensions[offset + j].height = template_sheet.row_dimensions[header_row + 2 + j].height
-
-    # Remove template sheet and save
-    workbook.remove(template_sheet)
-    return workbook_to_bytes(workbook)
+    return tpl.to_bytes()
 
 
 def generate_masterlista(all_data_df: pd.DataFrame) -> bytes:
-    """Generate master list (simple consolidated order list).
-
-    Creates masterlista.xlsx with one row per order.
+    """Generate master list: one row per order.
 
     Args:
         all_data_df: Merged and sorted DataFrame
+
+    Returns:
+        bytes: The .xlsx file content
     """
     df_master = all_data_df[[
         'OrderNumber', 'FullName', 'Email', 'OrderTotalAmount', 'OrderDate',
@@ -353,89 +266,33 @@ def generate_masterlista(all_data_df: pd.DataFrame) -> bytes:
         'Info ok', 'Hämtningsdag', 'Hämtning Tid'
     ]
 
-    # Remove duplicates
-    df_master = df_master.drop_duplicates()
-
-    return dataframe_to_xlsx_bytes({'Sheet1': df_master})
+    return dataframe_to_xlsx_bytes({'Sheet1': df_master.drop_duplicates()})
 
 
-def generate_lagerrapport(
-    inventory_df: pd.DataFrame,
-    template_dir: Path
-) -> bytes:
-    """Generate inventory report using template.
+def generate_lagerrapport(inventory_df: pd.DataFrame, template_dir: Path) -> bytes:
+    """Generate the inventory report: sheet 'Content', one row per product.
 
-    Creates lagerrapport.xlsx with one row per product showing sales performance,
-    calculations, and sales area categorization.
-
-    Follows the template-based pattern:
-    1. Copy template to output
-    2. Load workbook and template sheet
-    3. Create Content sheet from template
-    4. Insert rows and fill data using named ranges
-    5. Remove template sheet and save
+    Template layout: header row with named ranges (LAGERRAPPORT_FIELDS),
+    then one formatted data row.
 
     Args:
-        inventory_df: Processed inventory DataFrame with 10 columns:
-            - SKU
-            - Product title
-            - Category (SKUT)
-            - Category
-            - Regular price
-            - Items sold
-            - Stock
-            - Tax class
-            - Total sales
-            - Total tax
+        inventory_df: Output of lagerrapport_processor.prepare_lagerrapport_data()
         template_dir: Path to templates directory
+
+    Returns:
+        bytes: The .xlsx file content
     """
-    # Load template (the output is built in memory)
-    template_path = template_dir / config.TEMPLATE_FILENAME_LAGERRAPPORT
+    tpl = ReportTemplate(template_dir / config.TEMPLATE_FILENAME_LAGERRAPPORT)
+    header_row = tpl.row('SKU')
+    data_row = header_row + 1
 
+    sheet = tpl.new_sheet('Content')
+    sheet.delete_rows(idx=data_row, amount=1)  # template data row
 
-    # Load workbook
-    workbook = load_workbook(filename=template_path)
-    template_sheet = workbook['template']
+    for i, (_, product) in enumerate(inventory_df.iterrows()):
+        tpl.insert_row(sheet, data_row, data_row + i)
+        for name, column in LAGERRAPPORT_FIELDS.items():
+            # named ranges are on the header row; data starts one row below
+            tpl.fill(sheet, name, product[column], row_offset=i + 1)
 
-    # Get header row position (row 1 in our simplified template)
-    sku_cell = get_first_cell_for_named_range(workbook, template_sheet, 'SKU')
-    header_row = template_sheet[sku_cell].row  # Should be 1
-    template_data_row = header_row + 1  # Row 2 is the template data row
-
-    # Create Content sheet
-    content_sheet = workbook.copy_worksheet(template_sheet)
-    content_sheet.title = 'Content'
-
-    # Delete template data row (row 2)
-    content_sheet.delete_rows(idx=template_data_row, amount=1)
-
-    # Iterate through data and insert rows
-    i = 0
-    for index, row in inventory_df.iterrows():
-        # Insert row with formatting from template_data_row
-        insert_row_and_copy_format(
-            template_sheet,
-            content_sheet,
-            template_data_row,  # Copy formatting from row 2
-            template_data_row + i  # Insert at row 2, 3, 4, ...
-        )
-
-        # Fill data using named ranges
-        range_names = [
-            'SKU', 'ProductTitle', 'CategorySKUT', 'Category',
-            'RegularPrice', 'ItemsSold', 'Stock', 'TaxClass',
-            'TotalSales', 'TotalTax'
-        ]
-
-        for range_name, col_name in zip(range_names, inventory_df.columns):
-            fill_cell_for_attribute(
-                range_name, workbook, template_sheet, content_sheet,
-                i + 1,  # Offset by 1 because header is row 1, data starts row 2
-                row[col_name]
-            )
-
-        i += 1
-
-    # Remove template sheet and save
-    workbook.remove(template_sheet)
-    return workbook_to_bytes(workbook)
+    return tpl.to_bytes()
