@@ -143,3 +143,22 @@ def test_inventory_workflow_end_to_end():
     _button(at, '▶️ Generate Lagerrapport').click().run()
     assert not at.exception
     assert '📥 Download Lagerrapport' in _download_labels(at)
+
+
+def test_wrong_upload_shows_clear_error_without_traceback():
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.secrets['password'] = PASSWORD
+    at.run()
+    at.text_input[0].input(PASSWORD).run()
+    # Product export uploaded into all three fields
+    wrong = (FIXTURES / 'wc-product-export.csv').read_bytes()
+    for uploader in at.file_uploader:
+        if uploader.label in UPLOADS:
+            name, mime = UPLOADS[uploader.label]
+            uploader.set_value((name, wrong, mime))
+    at.run()
+    _button(at, '▶️ Run Validation').click().run()
+
+    assert not at.exception
+    assert any('orders.xlsx could not be read as an Excel file' in e.value for e in at.error)
+    assert not any(x.label == 'Technical details' for x in at.expander)

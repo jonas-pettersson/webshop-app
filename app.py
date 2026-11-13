@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from src import config
+from src.data_loader import InputFileError
 from src.data_validator import CHECKS
 from src.markets import JULMARKNAD, MARKETS
 from src.pipeline import (
@@ -116,8 +117,9 @@ def upload_id(uploaded_file):
 
 def show_error(message: str, error: Exception):
     st.error(f"❌ {message}: {error}")
-    with st.expander("Technical details"):
-        st.code(traceback.format_exc())
+    if not isinstance(error, InputFileError):  # those messages are self-explanatory
+        with st.expander("Technical details"):
+            st.code(traceback.format_exc())
 
 
 def show_validation_results(validation_result):
